@@ -26,8 +26,8 @@ Copy `.env.example` to `.env` (bun loads it automatically):
 
 - `PORT` — dev/prod port and the watcher's poll target
 - `KEV_ENDPOINT` — System One base URL; `/v1/systemone` is appended if missing. Unset = evaluations skipped, incidents still recorded
-- `KEV_API_KEY` — optional bearer token (omit for local kev servers)
-- `KEV_MODEL` — default `kev-latest`
+- `KEV_API_KEY` — bearer token (`KEV_DEMO_KEY` for the hosted demo; omit for local kev servers)
+- `KEV_MODEL` — must match the served checkpoint; demo serves `kev-9b`
 - `KEV_TIMEOUT_MS`, `POLL_INTERVAL_MS`
 
 ## Layout
