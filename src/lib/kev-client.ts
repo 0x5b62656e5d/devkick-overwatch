@@ -76,7 +76,7 @@ export async function evaluateIncident(
   const baseUrl = process.env.KEV_ENDPOINT || process.env.KEV_API_URL
   if (!baseUrl) return null
 
-  const model = process.env.KEV_MODEL || 'kev-latest'
+  const model = process.env.KEV_MODEL || 'kev-9b'
   const teams = [...new Set(context.teams)]
   if (teams.length === 0) throw new Error('No owner choices were provided')
   const teamCriteria = Object.fromEntries(teams.map((team) => [
