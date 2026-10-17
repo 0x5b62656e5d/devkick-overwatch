@@ -8,6 +8,7 @@ import tailwindcss from '@tailwindcss/vite'
 import { nitro } from 'nitro/vite'
 
 const config = defineConfig({
+  server: { port: Number(process.env.PORT ?? 3000) },
   resolve: { tsconfigPaths: true },
   plugins: [
     devtools(),
