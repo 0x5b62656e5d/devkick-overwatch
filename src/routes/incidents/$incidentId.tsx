@@ -242,6 +242,7 @@ function IncidentDetailPage() {
                 <FileCode2 aria-hidden className="h-4 w-4 text-[#475569]" />
               </span>
               <div className="min-w-0 flex-1">
+                <span className="text-[12px] font-medium text-ink-3">Affected endpoint</span>
                 <div className="flex items-center gap-2">
                   <span className="rounded-full bg-info-soft px-1.5 py-0.5 font-mono text-[11px] font-medium text-[#475569]">
                     {i.evidence.endpoint.method}
@@ -261,6 +262,7 @@ function IncidentDetailPage() {
                 <Terminal aria-hidden className="h-4 w-4 text-[#475569]" />
               </span>
               <div className="min-w-0 flex-1">
+                <span className="text-[12px] font-medium text-ink-3">Example request</span>
                 <div className="flex items-center gap-2">
                   <span className="rounded-full bg-info-soft px-1.5 py-0.5 font-mono text-[11px] font-medium text-[#475569]">
                     {i.evidence.exampleRequest.method}

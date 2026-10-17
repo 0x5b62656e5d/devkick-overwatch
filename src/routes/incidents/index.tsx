@@ -52,7 +52,7 @@ const columns: Column<Incident>[] = [
     sortable: true,
     sortValue: (i) => i.service,
     render: (i) => (
-      <span className="rounded-full bg-info-soft px-2 py-0.5 font-mono text-[12px] text-[#475569]">
+      <span className="whitespace-nowrap rounded-full bg-info-soft px-2 py-0.5 font-mono text-[12px] text-[#475569]">
         {i.service}
       </span>
     ),
@@ -105,7 +105,7 @@ const columns: Column<Incident>[] = [
     render: (i) => (
       <span className="flex items-center gap-2">
         <Avatar initials={i.owner.initials} size={22} />
-        <span className="text-[13px] text-ink-2">{i.owner.name}</span>
+        <span className="whitespace-nowrap text-[13px] text-ink-2">{i.owner.name}</span>
       </span>
     ),
   },

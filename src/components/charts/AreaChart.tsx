@@ -12,7 +12,7 @@ export interface AreaSeries {
 }
 
 const HEIGHT = 220
-const PAD = { top: 10, right: 46, bottom: 22, left: 8 }
+const PAD = { top: 10, bottom: 22, left: 8 }
 
 export function AreaChart({
   series,
@@ -31,7 +31,16 @@ export function AreaChart({
   const primary = series.find((s) => s.kind !== 'bars') ?? series[0]
   const n = primary?.data.length ?? 0
 
-  const innerW = Math.max(1, width - PAD.left - PAD.right)
+  const labelSeries = series.find((s) => (s.axis ?? 'left') === 'left' && s.kind !== 'bars') ?? series[0]
+  const labelMax = labelSeries
+    ? Math.max(1, ...labelSeries.data.map((d) => d.value)) * 1.08
+    : 1
+  const longestLabel = labelSeries?.format
+    ? labelSeries.format(labelMax)
+    : String(Math.round(labelMax))
+  const padRight = 12 + longestLabel.length * 7 + 4
+
+  const innerW = Math.max(1, width - PAD.left - padRight)
   const innerH = Math.max(1, height - PAD.top - PAD.bottom)
 
   const scaleFor = (list: AreaSeries[]) => {
@@ -66,7 +75,7 @@ export function AreaChart({
         </desc>
         {/* horizontal gridlines */}
         {ticks.map((y, i) => (
-          <line key={i} x1={PAD.left} x2={width - PAD.right + 8} y1={y} y2={y} stroke="var(--color-line)" strokeWidth={1} />
+          <line key={i} x1={PAD.left} x2={width - padRight + 8} y1={y} y2={y} stroke="var(--color-line)" strokeWidth={1} />
         ))}
         {/* y labels */}
         {ticks.map((y, i) => {
@@ -76,7 +85,7 @@ export function AreaChart({
           return (
             <text
               key={i}
-              x={width - PAD.right + 12}
+              x={width - padRight + 12}
               y={y + 4}
               fontSize={11}
               fill="var(--color-ink-3)"
@@ -86,14 +95,17 @@ export function AreaChart({
             </text>
           )
         })}
-        {/* x labels every 4th tick */}
-        {primary?.data.map((d, i) =>
-          i % 4 === 0 ? (
-            <text key={i} x={x(i)} y={height - 6} textAnchor="middle" fontSize={11} fill="var(--color-ink-3)">
+        {/* x labels every 4th tick; clamp edge labels inside the plot */}
+        {primary?.data.map((d, i) => {
+          if (i % 4 !== 0) return null
+          const lastTick = Math.floor((n - 1) / 4) * 4
+          const anchor = i === 0 ? 'start' : i >= lastTick ? 'end' : 'middle'
+          return (
+            <text key={i} x={x(i)} y={height - 6} textAnchor={anchor} fontSize={11} fill="var(--color-ink-3)">
               {formatTime(d.t)}
             </text>
-          ) : null,
-        )}
+          )
+        })}
         {/* bars (secondary axis) */}
         {series
           .filter((s) => s.kind === 'bars')

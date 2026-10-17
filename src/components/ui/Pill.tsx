@@ -3,7 +3,16 @@ import type { Severity, IncidentStatus } from '#/lib/mock/incidents'
 type SeverityPill = { kind: 'severity'; value: Severity }
 type StatusPill = {
   kind: 'status'
-  value: IncidentStatus | 'new' | 'grouped' | 'ignored' | 'passing' | 'failing'
+  value:
+    | IncidentStatus
+    | 'new'
+    | 'grouped'
+    | 'ignored'
+    | 'passing'
+    | 'failing'
+    | 'passed'
+    | 'failed'
+    | 'warning'
 }
 type PillProps = SeverityPill | StatusPill
 
@@ -23,6 +32,9 @@ const statusStyles: Record<string, { bg: string; text: string; label: string }> 
   ignored: { bg: 'bg-info-soft', text: 'text-[#475569]', label: 'Ignored' },
   passing: { bg: 'bg-success-soft', text: 'text-[#166534]', label: 'Passing' },
   failing: { bg: 'bg-critical-soft', text: 'text-[#991b1b]', label: 'Failing' },
+  passed: { bg: 'bg-success-soft', text: 'text-[#166534]', label: 'Passed' },
+  failed: { bg: 'bg-critical-soft', text: 'text-[#991b1b]', label: 'Failed' },
+  warning: { bg: 'bg-warning-soft', text: 'text-[#92400e]', label: 'Warning' },
 }
 
 export function Pill(props: PillProps) {

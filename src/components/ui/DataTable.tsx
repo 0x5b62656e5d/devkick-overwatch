@@ -143,19 +143,24 @@ export function PaginationFooter({
   pageSize,
   total,
   onPageChange,
+  leading,
 }: {
   page: number
   pageSize: number
   total: number
   onPageChange: (page: number) => void
+  leading?: ReactNode
 }) {
   const pages = Math.max(1, Math.ceil(total / pageSize))
   const from = total === 0 ? 0 : (page - 1) * pageSize + 1
   const to = Math.min(total, page * pageSize)
   return (
-    <div className="flex items-center justify-between border-t border-line px-4 py-3">
-      <p className="text-[12px] text-ink-3">
-        Showing <span className="tnum">{from}–{to}</span> of <span className="tnum">{total}</span>
+    <div className="flex flex-wrap items-center justify-between gap-2 border-t border-line px-4 py-3">
+      <p className="flex items-center gap-3 text-[12px] text-ink-3">
+        <span>
+          Showing <span className="tnum">{from}–{to}</span> of <span className="tnum">{total}</span>
+        </span>
+        {leading}
       </p>
       <div className="flex items-center gap-1">
         <button

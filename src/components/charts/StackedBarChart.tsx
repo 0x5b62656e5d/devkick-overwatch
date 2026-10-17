@@ -11,17 +11,24 @@ const KEYS = [
 type Key = (typeof KEYS)[number]['key']
 
 const HEIGHT = 220
-const PAD = { top: 10, right: 46, bottom: 22, left: 8 }
+const PAD = { top: 10, bottom: 22, left: 8 }
 
 export function StackedBarChart({
   buckets,
   height = HEIGHT,
+  every = 4,
+  xLabel,
 }: {
   buckets: ({ t: string } & Record<Key, number>)[]
   height?: number
+  every?: number
+  xLabel?: (b: { t: string }) => string
 }) {
   const { ref, width } = useElementWidth<HTMLDivElement>(600)
-  const innerW = Math.max(1, width - PAD.left - PAD.right)
+  const maxLabelLen = Math.max(1, ...buckets.map((b) => KEYS.reduce((s, k) => s + b[k.key], 0)))
+  const longest = String(Math.round(maxLabelLen * 1.06))
+  const padRight = 12 + longest.length * 7 + 4
+  const innerW = Math.max(1, width - PAD.left - padRight)
   const innerH = Math.max(1, height - PAD.top - PAD.bottom)
   const max = Math.max(1, ...buckets.map((b) => KEYS.reduce((s, k) => s + b[k.key], 0))) * 1.06
   const bw = Math.max(2, innerW / buckets.length - 2)
@@ -41,10 +48,10 @@ export function StackedBarChart({
           Stacked bars over {buckets.length} buckets. Stack order: critical, error, warning, info.
         </desc>
         {ticks.map((y, i) => (
-          <line key={i} x1={PAD.left} x2={width - PAD.right + 8} y1={y} y2={y} stroke="var(--color-line)" strokeWidth={1} />
+          <line key={i} x1={PAD.left} x2={width - padRight + 8} y1={y} y2={y} stroke="var(--color-line)" strokeWidth={1} />
         ))}
         {ticks.map((y, i) => (
-          <text key={i} x={width - PAD.right + 12} y={y + 4} fontSize={11} fill="var(--color-ink-3)" className="tnum">
+          <text key={i} x={width - padRight + 12} y={y + 4} fontSize={11} fill="var(--color-ink-3)" className="tnum">
             {Math.round(max * (1 - i / 3))}
           </text>
         ))}
@@ -73,9 +80,17 @@ export function StackedBarChart({
                   </rect>
                 )
               })}
-              {i % 4 === 0 ? (
-                <text x={x + bw / 2} y={height - 6} textAnchor="middle" fontSize={11} fill="var(--color-ink-3)">
-                  {formatTime(b.t)}
+              {i % every === 0 ? (
+                <text
+                  x={x + bw / 2}
+                  y={height - 6}
+                  textAnchor={
+                    i === 0 ? 'start' : i >= Math.floor((buckets.length - 1) / every) * every ? 'end' : 'middle'
+                  }
+                  fontSize={11}
+                  fill="var(--color-ink-3)"
+                >
+                  {xLabel ? xLabel(b) : formatTime(b.t)}
                 </text>
               ) : null}
             </g>

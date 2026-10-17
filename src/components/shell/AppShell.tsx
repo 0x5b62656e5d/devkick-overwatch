@@ -34,11 +34,11 @@ function Wordmark() {
 const NAV = [
   { label: 'Overview', icon: LayoutDashboard, to: '/' as const },
   { label: 'Incidents', icon: Bell, to: '/incidents' as const, badge: true },
-  { label: 'Error Reports', icon: FileWarning },
-  { label: 'Telemetry', icon: Activity },
-  { label: 'Verification', icon: ShieldCheck },
-  { label: 'Reports', icon: BarChart3 },
-  { label: 'Settings', icon: Settings },
+  { label: 'Error Reports', icon: FileWarning, to: '/errors' as const },
+  { label: 'Telemetry', icon: Activity, to: '/telemetry' as const },
+  { label: 'Verification', icon: ShieldCheck, to: '/verification' as const },
+  { label: 'Reports', icon: BarChart3, to: '/reports' as const },
+  { label: 'Settings', icon: Settings, to: '/settings' as const },
 ]
 
 function NavItems({ collapsed, onNavigate }: { collapsed?: boolean; onNavigate?: () => void }) {
@@ -61,27 +61,17 @@ function NavItems({ collapsed, onNavigate }: { collapsed?: boolean; onNavigate?:
           'flex items-center gap-2.5 rounded-control px-2.5 py-2 text-[13px] font-medium transition-colors duration-150 text-ink-2 hover:bg-sunken hover:text-ink [&.active]:bg-primary-soft [&.active]:text-ink [&.active>svg]:text-primary'
         return (
           <li key={item.label}>
-            {item.to ? (
-              <Link
-                to={item.to}
-                title={collapsed ? item.label : undefined}
-                aria-label={collapsed ? item.label : undefined}
-                className={`${cls} ${collapsed ? 'justify-center px-0' : ''}`}
-                activeOptions={{ exact: item.to === '/' }}
-                activeProps={{ className: 'active' }}
-                onClick={onNavigate}
-              >
-                {inner}
-              </Link>
-            ) : (
-              <span
-                title={collapsed ? item.label : `${item.label} — not in this build`}
-                aria-disabled="true"
-                className={`${cls} cursor-default text-ink-3 ${collapsed ? 'justify-center px-0' : ''}`}
-              >
-                {inner}
-              </span>
-            )}
+            <Link
+              to={item.to}
+              title={collapsed ? item.label : undefined}
+              aria-label={collapsed ? item.label : undefined}
+              className={`${cls} ${collapsed ? 'justify-center px-0' : ''}`}
+              activeOptions={{ exact: item.to === '/' }}
+              activeProps={{ className: 'active' }}
+              onClick={onNavigate}
+            >
+              {inner}
+            </Link>
           </li>
         )
       })}
@@ -138,12 +128,19 @@ function TopBar({ onMenu }: { onMenu: () => void }) {
         <Wordmark />
       </span>
       <div className="hidden items-center gap-2 md:flex">
-        <Select
-          aria-label="Environment"
-          defaultValue="production"
-          options={[{ value: 'production', label: 'Production' }]}
-        />
-        <span aria-hidden className="-ml-1.5 h-1.5 w-1.5 rounded-full bg-success" title="Healthy" />
+        <span className="relative inline-flex items-center">
+          <span
+            aria-hidden
+            className="pointer-events-none absolute left-3 z-10 h-1.5 w-1.5 rounded-full bg-success"
+            title="Healthy"
+          />
+          <Select
+            aria-label="Environment"
+            defaultValue="production"
+            className="[&>select]:pl-7"
+            options={[{ value: 'production', label: 'Production' }]}
+          />
+        </span>
         <TimeRangeSelect />
       </div>
       <div className="ml-auto flex items-center gap-1.5">
@@ -231,9 +228,9 @@ export function AppShell({ scenario, children }: { scenario: string; children: R
           </div>
         </div>
       ) : null}
-      <div className="flex min-w-0 flex-1 flex-col md:pl-16 lg:pl-[232px]">
+      <div className="flex min-w-0 flex-1 flex-col overflow-x-hidden md:pl-16 lg:pl-[232px]">
         <TopBar onMenu={() => setSheetOpen(true)} />
-        <main className="flex-1 p-4 lg:p-6">{children}</main>
+        <main className="min-w-0 flex-1 p-4 lg:p-6">{children}</main>
       </div>
     </div>
   )
