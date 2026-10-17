@@ -1,16 +1,17 @@
-// KEV System One decision client — TypeSafe System One protocol.
-// POST {KEV_ENDPOINT}/v1/systemone with {state, model, questions}.
-// choice: criteria maps option -> description, answer is the argmax name
-// score:  criteria is ordered level descriptions, answer is the expected
-//         level index (float)
-// noul:   answer is the probability of yes
-
-import type { IncidentCandidate } from './incident-detector'
-
-const KEV_ENDPOINT = process.env.KEV_ENDPOINT?.replace(/\/+$/, '')
-const KEV_API_KEY = process.env.KEV_API_KEY
-const KEV_MODEL = process.env.KEV_MODEL ?? 'kev-latest'
-const KEV_TIMEOUT_MS = Number(process.env.KEV_TIMEOUT_MS ?? 15_000)
+export interface IncidentContext {
+  service: string
+  signals: string[]
+  windowStart: string
+  windowEnd: string
+  team: string
+  teams: string[]
+  topology: Array<{ service: string; team: string }>
+  availability: number
+  errorRate: number
+  latenciesMs: number[]
+  requestCount: number
+  reports: Array<{ source: string; message: string; timestamp: string }>
+}
 
 export interface ChoiceAnswer {
   type: 'choice'
@@ -39,15 +40,9 @@ export interface KevAnswers {
   human: NoulAnswer
 }
 
-interface SystemOneResponse {
-  model: string
-  answers: KevAnswers
-  usage?: { input_tokens: number; output_tokens: number }
-  latency_ms?: number
-}
-
 export interface KevDecision {
   owner: string
+  /** Expected position on the ordered 0–4 severity rubric; may be fractional. */
   severity: number
   nextAction: 'investigate' | 'check-dependencies' | 'queue-rollback' | 'escalate-oncall'
   needsHuman: boolean
@@ -55,144 +50,114 @@ export interface KevDecision {
   answers: KevAnswers
 }
 
-const NEXT_ACTIONS = [
-  'investigate',
-  'check-dependencies',
-  'queue-rollback',
-  'escalate-oncall',
-] as const
+const ACTIONS = {
+  investigate: 'Investigate the service and gather more evidence.',
+  'check-dependencies': 'Check upstream and downstream dependencies.',
+  'queue-rollback': 'Prepare a rollback for human approval.',
+  'escalate-oncall': 'Page the on-call human immediately.',
+} as const
 
-function endpointUrl(): string | null {
-  if (!KEV_ENDPOINT) return null
-  return KEV_ENDPOINT.endsWith('/v1/systemone')
-    ? KEV_ENDPOINT
-    : `${KEV_ENDPOINT}/v1/systemone`
+const SEVERITY_RUBRIC = [
+  '0: minor issue with negligible customer impact',
+  '1: limited degradation affecting a small share of requests',
+  '2: sustained degradation affecting customers',
+  '3: major outage or widespread customer impact',
+  '4: critical outage of a core service requiring immediate response',
+]
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
 }
 
-function buildQuestions(candidate: IncidentCandidate) {
-  const teamServices = new Map<string, string[]>()
-  for (const s of candidate.snapshot.services) {
-    teamServices.set(s.team, [...(teamServices.get(s.team) ?? []), s.name])
-  }
-  const ownerCriteria = Object.fromEntries(
-    [...teamServices].map(([team, services]) => [
-      team,
-      `owns ${services.join(', ')}`,
-    ]),
-  )
-
-  return {
-    owner: {
-      type: 'choice',
-      instructions: 'Which engineering team should own this incident?',
-      criteria: ownerCriteria,
-    },
-    severity: {
-      type: 'score',
-      instructions: 'Rate the severity of this incident by customer impact.',
-      criteria: [
-        'sev5: no user-facing impact',
-        'sev4: minor degradation, workaround exists',
-        'sev3: partial outage affecting some users',
-        'sev2: major degradation or outage for many users',
-        'sev1: critical outage, core flows failing',
-      ],
-    },
-    action: {
-      type: 'choice',
-      instructions: 'What should happen next in response to this incident?',
-      criteria: {
-        investigate: 'assign an engineer to investigate logs and traces',
-        'check-dependencies': 'check upstream and downstream dependencies for the root cause',
-        'queue-rollback': 'queue a rollback of the most recent deploy',
-        'escalate-oncall': 'escalate to the on-call engineer immediately',
-      },
-    },
-    human: {
-      type: 'noul',
-      instructions: 'Does this incident require immediate human intervention?',
-      criteria: {
-        true: 'a human must intervene right now',
-        false: 'automated handling is acceptable for now',
-      },
-    },
-  }
-}
-
-function buildState(candidate: IncidentCandidate) {
-  const service = candidate.snapshot.services.find(
-    (s) => s.name === candidate.service,
-  )
-  return {
-    incident: {
-      service: candidate.service,
-      owningTeam: candidate.team,
-      detectedSignals: candidate.signals,
-    },
-    metrics: service,
-    externalReports: candidate.snapshot.reports
-      .filter((r) => r.service === candidate.service)
-      .map(({ source, message, timestamp }) => ({ source, message, timestamp })),
-    topology: candidate.snapshot.services.map((s) => ({
-      service: s.name,
-      team: s.team,
-    })),
-  }
-}
-
-let warned = false
-
+/** Null means KEV has not been configured; failures throw for the caller to record. */
 export async function evaluateIncident(
-  candidate: IncidentCandidate,
+  context: IncidentContext,
 ): Promise<KevDecision | null> {
-  const url = endpointUrl()
-  if (!url) {
-    if (!warned) {
-      console.warn('[kev] KEV_ENDPOINT not set — skipping evaluation')
-      warned = true
-    }
-    return null
+  const baseUrl = process.env.KEV_ENDPOINT || process.env.KEV_API_URL
+  if (!baseUrl) return null
+
+  const model = process.env.KEV_MODEL || 'kev-latest'
+  const teams = [...new Set(context.teams)]
+  if (teams.length === 0) throw new Error('No owner choices were provided')
+  const teamCriteria = Object.fromEntries(teams.map((team) => [
+    team,
+    `Owns ${context.topology.filter((item) => item.team === team).map((item) => item.service).join(', ')}`,
+  ]))
+  const endpoint = baseUrl.replace(/\/+$/, '')
+  const url = endpoint.endsWith('/v1/systemone') ? endpoint : `${endpoint}/v1/systemone`
+  const timeout = Number(process.env.KEV_TIMEOUT_MS ?? 15_000)
+  if (!Number.isFinite(timeout) || timeout <= 0) throw new Error('Invalid KEV_TIMEOUT_MS')
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(process.env.KEV_API_KEY
+        ? { Authorization: `Bearer ${process.env.KEV_API_KEY}` }
+        : {}),
+    },
+    body: JSON.stringify({
+      model,
+      state: context,
+      questions: {
+        owner: {
+          type: 'choice',
+          instructions: 'Which team should own this incident? Use the service ownership and incident signals.',
+          criteria: teamCriteria,
+        },
+        severity: {
+          type: 'score',
+          instructions: 'Rate customer impact and urgency using the ordered severity rubric.',
+          criteria: SEVERITY_RUBRIC,
+        },
+        action: {
+          type: 'choice',
+          instructions: 'Choose the single next step. A rollback is only queued for review, not executed.',
+          criteria: ACTIONS,
+        },
+        human: {
+          type: 'noul',
+          instructions: 'Does this incident require immediate human intervention?',
+        },
+      },
+    }),
+    signal: AbortSignal.timeout(timeout),
+  })
+
+  if (!response.ok) throw new Error(`KEV request failed with HTTP ${response.status}`)
+  const payload: unknown = await response.json()
+  if (!isRecord(payload) || !isRecord(payload.answers)) {
+    throw new Error('KEV returned an invalid response')
   }
 
-  try {
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        ...(KEV_API_KEY ? { authorization: `Bearer ${KEV_API_KEY}` } : {}),
-      },
-      body: JSON.stringify({
-        state: buildState(candidate),
-        model: KEV_MODEL,
-        questions: buildQuestions(candidate),
-      }),
-      signal: AbortSignal.timeout(KEV_TIMEOUT_MS),
-    })
+  const { owner, severity, action, human } = payload.answers
+  if (
+    !isRecord(owner) || owner.type !== 'choice' ||
+    typeof owner.choice !== 'string' || !teams.includes(owner.choice) ||
+    typeof owner.confidence !== 'number' || !Number.isFinite(owner.confidence) ||
+    !isRecord(owner.probabilities) ||
+    !isRecord(severity) || severity.type !== 'score' ||
+    typeof severity.score !== 'number' || !Number.isFinite(severity.score) ||
+    severity.score < 0 || severity.score > SEVERITY_RUBRIC.length - 1 ||
+    typeof severity.confidence !== 'number' || !Number.isFinite(severity.confidence) ||
+    !isRecord(severity.probabilities) ||
+    !isRecord(action) || action.type !== 'choice' ||
+    typeof action.choice !== 'string' || !(action.choice in ACTIONS) ||
+    typeof action.confidence !== 'number' || !Number.isFinite(action.confidence) ||
+    !isRecord(action.probabilities) ||
+    !isRecord(human) || human.type !== 'noul' ||
+    typeof human.noul !== 'number' || !Number.isFinite(human.noul) ||
+    human.noul < 0 || human.noul > 1
+  ) {
+    throw new Error('KEV returned an invalid decision')
+  }
 
-    if (!res.ok) {
-      console.error(`[kev] ${res.status}: ${await res.text()}`)
-      return null
-    }
-
-    const data = (await res.json()) as SystemOneResponse
-    const { owner, severity, action, human } = data.answers
-
-    return {
-      owner: owner.choice,
-      severity: Math.round(severity.score) + 1,
-      nextAction: NEXT_ACTIONS.includes(action.choice as never)
-        ? (action.choice as KevDecision['nextAction'])
-        : 'investigate',
-      needsHuman: human.noul >= 0.5,
-      confidence: Math.min(
-        owner.confidence,
-        severity.confidence,
-        action.confidence,
-      ),
-      answers: data.answers,
-    }
-  } catch (err) {
-    console.error('[kev] request failed:', err)
-    return null
+  return {
+    owner: owner.choice,
+    severity: severity.score,
+    nextAction: action.choice as KevDecision['nextAction'],
+    needsHuman: human.noul >= 0.5,
+    confidence: Math.min(owner.confidence, severity.confidence, action.confidence),
+    answers: { owner, severity, action, human } as unknown as KevAnswers,
   }
 }

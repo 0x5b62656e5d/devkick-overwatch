@@ -9,7 +9,7 @@ incidents on a dashboard.
 
 - TanStack Start (SSR) + TanStack Router file routes, React 19, TypeScript
 - Tailwind CSS v4 (via `@tailwindcss/vite`, no config file)
-- Nitro server output; deploys to Railway via Railpack (`railpack.json`)
+- Nitro server output; deploys to Railway via Railpack
 - No database — in-memory state in `src/lib/incident-state.ts`
 
 ## Commands
@@ -38,7 +38,8 @@ Copy `.env.example` to `.env` (bun loads it automatically):
   - `incident-detector.ts` — batch evaluation → incident candidates
   - `kev-client.ts` — KEV System One API integration
   - `incident-state.ts` — incident records + action queue + latest snapshot
-  - `watcher.ts` — poll loop: snapshot -> detect -> KEV -> record
+  - `watcher.ts` — starts the monitor at boot
+  - `incident-monitor.ts` — rolling window, poll loop, KEV evaluation
 - `src/server.ts` — server entry; starts the watcher at boot
 - `src/components/` — dashboard panels
 

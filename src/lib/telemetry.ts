@@ -1,5 +1,5 @@
 // Mock telemetry source.
-// Owns telemetry types and scenario state; the watcher hands snapshots
+// Owns telemetry types and scenario state; the poller hands snapshots
 // to the incident detector at a configurable interval.
 
 export const SCENARIOS = ['healthy', 'degraded', 'critical'] as const
@@ -187,3 +187,5 @@ export function collectTelemetry(): TelemetrySnapshot {
     reports,
   }
 }
+
+// The server-side poller in incident-monitor.ts consumes these snapshots.
