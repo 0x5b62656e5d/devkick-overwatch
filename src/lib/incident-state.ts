@@ -1,8 +1,10 @@
 import type { IncidentCandidate } from './incident-detector'
 import type { KevDecision } from './kev-client'
+import type { TelemetrySnapshot } from './telemetry'
 
-// In-memory incident state and action queue. Swap for persistent
-// storage later — everything else talks to these functions.
+// In-memory incident state, action queue, and latest telemetry snapshot.
+// Swap for persistent storage later — everything else talks to these
+// functions.
 
 export interface Incident {
   id: string
@@ -20,9 +22,16 @@ export interface QueuedAction {
 
 const incidents = new Map<string, Incident>()
 const actionQueue: QueuedAction[] = []
+let latestSnapshot: TelemetrySnapshot | null = null
 
 export function listIncidents(): Incident[] {
   return [...incidents.values()]
+}
+
+export function hasOpenIncidentFor(service: string): boolean {
+  return [...incidents.values()].some(
+    (i) => i.status === 'open' && i.candidate.service === service,
+  )
 }
 
 export function createIncident(
@@ -51,4 +60,12 @@ export function createIncident(
 
 export function listActionQueue(): QueuedAction[] {
   return [...actionQueue]
+}
+
+export function setLatestSnapshot(snapshot: TelemetrySnapshot): void {
+  latestSnapshot = snapshot
+}
+
+export function getLatestSnapshot(): TelemetrySnapshot | null {
+  return latestSnapshot
 }
