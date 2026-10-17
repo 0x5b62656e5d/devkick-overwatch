@@ -1,5 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { captureTelemetry, getMonitorStatus } from '#/lib/incident-monitor'
+import { captureTelemetry, getMonitorStatus, getTelemetryHistory } from '#/lib/incident-monitor'
 import { getLatestSnapshot, listActionQueue, listIncidents } from '#/lib/incident-state'
 
 export const Route = createFileRoute('/api/incidents')({
@@ -9,6 +9,8 @@ export const Route = createFileRoute('/api/incidents')({
         incidents: listIncidents(),
         actionQueue: listActionQueue(),
         snapshot: getLatestSnapshot(),
+        history: getTelemetryHistory(),
+        kev: { configured: Boolean(process.env.KEV_ENDPOINT || process.env.KEV_API_URL) },
         monitor: getMonitorStatus(),
       }),
       // An on-demand sample uses the same sustained-issue gate as the poller.
@@ -17,6 +19,8 @@ export const Route = createFileRoute('/api/incidents')({
         return Response.json({
           ...result,
           actionQueue: listActionQueue(),
+          history: getTelemetryHistory(),
+          kev: { configured: Boolean(process.env.KEV_ENDPOINT || process.env.KEV_API_URL) },
           monitor: getMonitorStatus(),
         })
       },
