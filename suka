@@ -1,0 +1,270 @@
+import { test as base, expect } from '@playwright/test';
+import { createServer } from 'node:http';
+import { readFile } from 'node:fs/promises';
+
+const bundle = await readFile(new URL('../dist/overwatch.min.js', import.meta.url));
+
+const test = base.extend({
+  harness: async ({ page }, use) => {
+    const deliveries = [];
+    let ingestStatus = 204;
+    const html = '<!doctype html><title>SDK test</title><script src="/sdk.js"></script>';
+    const server = createServer(async (request, response) => {
+      const path = new URL(request.url, 'http://localhost').pathname;
+      if (path === '/sdk.js') {
+        response.writeHead(200, { 'Content-Type': 'text/javascript' }).end(bundle);
+      } else if (path === '/ingest') {
+        let body = '';
+        for await (const chunk of request) body += chunk;
+        deliveries.push({ body: JSON.parse(body || '{}'), headers: request.headers, bytes: Buffer.byteLength(body) });
+        response.writeHead(ingestStatus).end();
+      } else if (path === '/api/drop') {
+        request.socket.destroy();
+      } else if (path === '/api/slow') {
+        // Client aborts; no server timeout is needed.
+      } else if (path.startsWith('/api/')) {
+        response.writeHead(Number(path.split('/').at(-1)), { 'Content-Type': 'application/json' })
+          .end(JSON.stringify({ secret: 'response-body-secret' }));
+      } else if (path.startsWith('/missing')) {
+        response.writeHead(404).end('missing');
+      } else {
+        response.writeHead(path === '/broken-page' ? 503 : 200, { 'Content-Type': 'text/html' }).end(html);
+      }
+    });
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    const origin = `http://127.0.0.1:${server.address().port}`;
+    const harness = {
+      deliveries,
+      events: () => deliveries.flatMap(delivery => delivery.body.events || []),
+      setStatus: status => { ingestStatus = status; },
+      async start(options = {}, path = '/orders/123?token=page-secret#private') {
+        await page.goto(`${origin}${path}`);
+        await page.evaluate(config => {
+          window.originals = {
+            fetch: window.fetch,
+            open: XMLHttpRequest.prototype.open,
+            send: XMLHttpRequest.prototype.send,
+          };
+          window.client = Overwatch.init(config);
+        }, { endpoint: `${origin}/ingest`, projectId: 'public-project', flushIntervalMs: 60000, ...options });
+      },
+      async flush() { await page.evaluate(() => window.client.flush()); },
+    };
+    try { await use(harness); }
+    finally {
+      await page.evaluate(() => window.client?.destroy()).catch(() => {});
+      server.closeAllConnections();
+      await new Promise(resolve => server.close(resolve));
+    }
+  },
+});
+
+test('captures runtime exceptions and unhandled promises with sanitized page, browser and stack', async ({ page, harness }) => {
+  await harness.start();
+  await page.evaluate(() => {
+    setTimeout(() => { throw new TypeError('Checkout failed for alice@example.com password=private-secret'); }, 0);
+    void Promise.reject(new Error('Promise failed token=another-secret'));
+  });
+  await expect.poll(async () => {
+    await harness.flush();
+    return harness.events().length;
+  }).toBe(2);
+  const events = harness.events();
+  expect(events.map(event => event.type).sort()).toEqual(['javascript_error', 'unhandled_rejection']);
+  for (const event of events) {
+    expect(event.browser.name).toBe('Chrome');
+    expect(event.error.stack).toBeTruthy();
+    expect(event.page.url).toMatch(/\/orders\/\[redacted\]$/);
+    expect(event.fingerprint).toMatch(/^v1-[a-f0-9]{16}$/);
+    expect(event.id).toMatch(/^[a-f0-9-]{36}$/);
+    expect(event.timestamp).toMatch(/^\d{4}-/);
+  }
+  const wire = JSON.stringify(harness.deliveries);
+  for (const secret of ['alice@example.com', 'private-secret', 'another-secret', 'page-secret', '#private']) {
+    expect(wire).not.toContain(secret);
+  }
+});
+
+test('fetch preserves responses and rejections while reporting HTTP and connection failures', async ({ page, harness }) => {
+  await harness.start();
+  const result = await page.evaluate(async () => {
+    const bad = await fetch('/api/500?api_key=request-secret', {
+      method: 'POST', headers: { 'X-Private': 'header-secret' }, body: 'request-body-secret',
+    });
+    const body = await bad.json();
+    await fetch('/api/404');
+    const success = await fetch('/api/200');
+    const rejected = await fetch('/api/drop').catch(error => error instanceof TypeError);
+    const controller = new AbortController();
+    const aborted = fetch('/api/slow', { signal: controller.signal }).catch(error => error.name);
+    controller.abort();
+    return { status: bad.status, body, success: success.status, rejected, aborted: await aborted };
+  });
+  expect(result).toEqual({
+    status: 500, body: { secret: 'response-body-secret' }, success: 200, rejected: true, aborted: 'AbortError',
+  });
+  await harness.flush();
+  expect(harness.events().map(event => event.request.status).sort()).toEqual([0, 404, 500]);
+  const event = harness.events().find(event => event.request.status === 500);
+  expect(event.request.method).toBe('POST');
+  expect(event.request.transport).toBe('fetch');
+  expect(event.request.durationMs).toBeGreaterThanOrEqual(0);
+  const wire = JSON.stringify(harness.events());
+  for (const secret of ['request-secret', 'header-secret', 'request-body-secret', 'response-body-secret']) {
+    expect(wire).not.toContain(secret);
+  }
+});
+
+test('XHR handles reused requests, connection errors and timeouts without recording explicit aborts', async ({ page, harness }) => {
+  await harness.start();
+  const statuses = await page.evaluate(async () => {
+    const xhr = new XMLHttpRequest();
+    async function request(path, action) {
+      return new Promise(resolve => {
+        xhr.open('GET', path);
+        xhr.timeout = action === 'timeout' ? 20 : 0;
+        xhr.addEventListener('loadend', () => resolve(xhr.status), { once: true });
+        xhr.send();
+        if (path === '/api/500') {
+          // A mistaken second send must still throw without removing observation of the first.
+          try { xhr.send(); } catch (error) {
+            if (error.name !== 'InvalidStateError') throw error;
+          }
+        }
+        if (action === 'abort') xhr.abort();
+      });
+    }
+    return [
+      await request('/api/500'),
+      await request('/api/200'),
+      await request('/api/drop'),
+      await request('/api/slow', 'timeout'),
+      await request('/api/slow', 'abort'),
+    ];
+  });
+  expect(statuses).toEqual([500, 200, 0, 0, 0]);
+  await harness.flush();
+  expect(harness.events().map(event => event.error.name)).toEqual(['HTTPError', 'NetworkError', 'TimeoutError']);
+  expect(harness.events().every(event => event.request.transport === 'xhr')).toBe(true);
+});
+
+test('captures script, image and stylesheet failures and visible navigation HTTP failures', async ({ page, harness }) => {
+  await harness.start({}, '/broken-page');
+  await page.evaluate(async () => {
+    await Promise.all(['script', 'img', 'link'].map(tag => new Promise(resolve => {
+      const node = document.createElement(tag);
+      node.onerror = resolve;
+      if (tag === 'link') { node.rel = 'stylesheet'; node.href = '/missing.css?token=resource-secret'; }
+      else node.src = `/missing.${tag}?token=resource-secret`;
+      document.head.append(node);
+    })));
+  });
+  await harness.flush();
+  expect(harness.events().filter(event => event.type === 'page_load_error')).toHaveLength(1);
+  expect(harness.events().filter(event => event.type === 'resource_error')).toHaveLength(3);
+  expect(JSON.stringify(harness.events())).not.toContain('resource-secret');
+});
+
+test('transport omits cookies and referrer, bounds retries, and never captures itself', async ({ page, harness }) => {
+  await harness.start({ flushIntervalMs: 1000 });
+  await page.evaluate(() => { document.cookie = 'session=private-cookie'; });
+  harness.setStatus(503);
+  await page.evaluate(() => {
+    client.captureException(new Error('Delivery test'));
+    return client.flush();
+  });
+  expect(harness.deliveries).toHaveLength(1);
+  expect(harness.deliveries[0].headers.cookie).toBeUndefined();
+  expect(harness.deliveries[0].headers.referer).toBeUndefined();
+  await expect.poll(() => harness.deliveries.length, { timeout: 7000 }).toBe(3);
+  await page.waitForTimeout(1100);
+  expect(harness.deliveries).toHaveLength(3);
+  expect(harness.events().every(event => event.type === 'javascript_error')).toBe(true);
+  expect(new Set(harness.events().map(event => event.id)).size).toBe(1);
+});
+
+test('init is idempotent and destroy restores instrumentation and allows reinitialization', async ({ page, harness }) => {
+  await harness.start();
+  const result = await page.evaluate(async () => {
+    const duplicate = Overwatch.init({ endpoint: '/ingest', projectId: 'public-project' });
+    await fetch('/api/500');
+    await client.flush();
+    client.destroy();
+    client.destroy();
+    await fetch('/api/500');
+    return {
+      same: duplicate === client,
+      fetch: window.fetch === originals.fetch,
+      open: XMLHttpRequest.prototype.open === originals.open,
+      send: XMLHttpRequest.prototype.send === originals.send,
+    };
+  });
+  expect(result).toEqual({ same: true, fetch: true, open: true, send: true });
+  expect(harness.events()).toHaveLength(1);
+  await page.evaluate(async () => {
+    window.client = Overwatch.init({ endpoint: '/ingest', projectId: 'public-project' });
+    await fetch('/api/500');
+    await client.flush();
+  });
+  expect(harness.events()).toHaveLength(2);
+});
+
+test('rate limits event storms and supports crypto without randomUUID', async ({ page, harness }) => {
+  const projectId = 'fcf93dbd-5b47-43e0-8534-9d33cc28bd89';
+  await harness.start({ maxEventsPerMinute: 3, projectId });
+  await page.evaluate(() => {
+    Object.defineProperty(crypto, 'randomUUID', { value: undefined });
+    for (let i = 0; i < 20; i++) client.captureException(new Error(`Repeated failure ${i}`));
+  });
+  await harness.flush();
+  expect(harness.events()).toHaveLength(3);
+  expect(new Set(harness.events().map(event => event.fingerprint)).size).toBe(1);
+  expect(new Set(harness.events().map(event => event.id)).size).toBe(3);
+  expect(harness.events().every(event => event.projectId === projectId)).toBe(true);
+});
+
+test('bounds total pagehide upload bytes and drains remaining large events in a normal flush', async ({ page, harness }) => {
+  await harness.start();
+  await page.evaluate(() => {
+    for (let i = 0; i < 9; i++) {
+      const error = new Error('🔥'.repeat(1024));
+      error.stack = 'Error: failure\n' + '🔥'.repeat(4096);
+      client.captureException(error);
+    }
+    window.dispatchEvent(new PageTransitionEvent('pagehide'));
+  });
+  await expect.poll(() => harness.deliveries.length).toBeGreaterThan(0);
+  expect(harness.events().length).toBeLessThan(9);
+  expect(harness.deliveries.reduce((total, delivery) => total + delivery.bytes, 0)).toBeLessThanOrEqual(48 * 1024);
+  // Join a lifecycle flush if it is still active, then drain the remaining queue.
+  await harness.flush();
+  await harness.flush();
+  expect(harness.events()).toHaveLength(9);
+  expect(harness.deliveries.every(delivery => delivery.bytes <= 48 * 1024)).toBe(true);
+});
+
+test('permanent ingestion errors are dropped and configuration fails before patching globals', async ({ page, harness }) => {
+  await harness.start();
+  harness.setStatus(400);
+  await page.evaluate(async () => {
+    client.captureException(new Error('Invalid event'));
+    await client.flush();
+    await client.flush();
+    client.destroy();
+  });
+  expect(harness.deliveries).toHaveLength(1);
+  const result = await page.evaluate(() => {
+    let failures = 0;
+    for (const options of [
+      { endpoint: 'https://secret:password@example.com/ingest', projectId: 'test' },
+      { endpoint: '/ingest?token=secret', projectId: 'test' },
+      { endpoint: '/ingest', projectId: '' },
+      { endpoint: '/ingest', projectId: 'test', flushIntervalMs: -1 },
+      { endpoint: '/ingest', projectId: 'test', redactPatterns: ['invalid'] },
+    ]) {
+      try { Overwatch.init(options); } catch { failures++; }
+    }
+    return { failures, unchanged: window.fetch === originals.fetch };
+  });
+  expect(result).toEqual({ failures: 5, unchanged: true });
+});

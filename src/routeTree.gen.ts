@@ -13,6 +13,8 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as ApiActionsRouteImport } from './routes/api/actions'
 import { Route as ApiIncidentsRouteImport } from './routes/api/incidents'
 import { Route as ApiTelemetryRouteImport } from './routes/api/telemetry'
+import { Route as IncidentsIndexRouteImport } from './routes/incidents/index'
+import { Route as IncidentsIncidentIdRouteImport } from './routes/incidents/$incidentId'
 import { Route as ApiIncidentsIncidentIdRouteImport } from './routes/api/incidents.$incidentId'
 import { Route as ApiIncidentsIncidentIdEvaluateRouteImport } from './routes/api/incidents.$incidentId.evaluate'
 
@@ -36,6 +38,16 @@ const ApiTelemetryRoute = ApiTelemetryRouteImport.update({
   path: '/api/telemetry',
   getParentRoute: () => rootRouteImport,
 } as any)
+const IncidentsIndexRoute = IncidentsIndexRouteImport.update({
+  id: '/incidents/',
+  path: '/incidents/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const IncidentsIncidentIdRoute = IncidentsIncidentIdRouteImport.update({
+  id: '/incidents/$incidentId',
+  path: '/incidents/$incidentId',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiIncidentsIncidentIdRoute = ApiIncidentsIncidentIdRouteImport.update({
   id: '/$incidentId',
   path: '/$incidentId',
@@ -53,6 +65,8 @@ export interface FileRoutesByFullPath {
   '/api/actions': typeof ApiActionsRoute
   '/api/incidents': typeof ApiIncidentsRouteWithChildren
   '/api/telemetry': typeof ApiTelemetryRoute
+  '/incidents/$incidentId': typeof IncidentsIncidentIdRoute
+  '/incidents/': typeof IncidentsIndexRoute
   '/api/incidents/$incidentId': typeof ApiIncidentsIncidentIdRouteWithChildren
   '/api/incidents/$incidentId/evaluate': typeof ApiIncidentsIncidentIdEvaluateRoute
 }
@@ -61,6 +75,8 @@ export interface FileRoutesByTo {
   '/api/actions': typeof ApiActionsRoute
   '/api/incidents': typeof ApiIncidentsRouteWithChildren
   '/api/telemetry': typeof ApiTelemetryRoute
+  '/incidents/$incidentId': typeof IncidentsIncidentIdRoute
+  '/incidents': typeof IncidentsIndexRoute
   '/api/incidents/$incidentId': typeof ApiIncidentsIncidentIdRouteWithChildren
   '/api/incidents/$incidentId/evaluate': typeof ApiIncidentsIncidentIdEvaluateRoute
 }
@@ -70,6 +86,8 @@ export interface FileRoutesById {
   '/api/actions': typeof ApiActionsRoute
   '/api/incidents': typeof ApiIncidentsRouteWithChildren
   '/api/telemetry': typeof ApiTelemetryRoute
+  '/incidents/$incidentId': typeof IncidentsIncidentIdRoute
+  '/incidents/': typeof IncidentsIndexRoute
   '/api/incidents/$incidentId': typeof ApiIncidentsIncidentIdRouteWithChildren
   '/api/incidents/$incidentId/evaluate': typeof ApiIncidentsIncidentIdEvaluateRoute
 }
@@ -80,6 +98,8 @@ export interface FileRouteTypes {
     | '/api/actions'
     | '/api/incidents'
     | '/api/telemetry'
+    | '/incidents/$incidentId'
+    | '/incidents/'
     | '/api/incidents/$incidentId'
     | '/api/incidents/$incidentId/evaluate'
   fileRoutesByTo: FileRoutesByTo
@@ -88,6 +108,8 @@ export interface FileRouteTypes {
     | '/api/actions'
     | '/api/incidents'
     | '/api/telemetry'
+    | '/incidents/$incidentId'
+    | '/incidents'
     | '/api/incidents/$incidentId'
     | '/api/incidents/$incidentId/evaluate'
   id:
@@ -96,6 +118,8 @@ export interface FileRouteTypes {
     | '/api/actions'
     | '/api/incidents'
     | '/api/telemetry'
+    | '/incidents/$incidentId'
+    | '/incidents/'
     | '/api/incidents/$incidentId'
     | '/api/incidents/$incidentId/evaluate'
   fileRoutesById: FileRoutesById
@@ -105,6 +129,8 @@ export interface RootRouteChildren {
   ApiActionsRoute: typeof ApiActionsRoute
   ApiIncidentsRoute: typeof ApiIncidentsRouteWithChildren
   ApiTelemetryRoute: typeof ApiTelemetryRoute
+  IncidentsIncidentIdRoute: typeof IncidentsIncidentIdRoute
+  IncidentsIndexRoute: typeof IncidentsIndexRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -135,6 +161,20 @@ declare module '@tanstack/react-router' {
       path: '/api/telemetry'
       fullPath: '/api/telemetry'
       preLoaderRoute: typeof ApiTelemetryRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/incidents/': {
+      id: '/incidents/'
+      path: '/incidents'
+      fullPath: '/incidents/'
+      preLoaderRoute: typeof IncidentsIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/incidents/$incidentId': {
+      id: '/incidents/$incidentId'
+      path: '/incidents/$incidentId'
+      fullPath: '/incidents/$incidentId'
+      preLoaderRoute: typeof IncidentsIncidentIdRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/incidents/$incidentId': {
@@ -185,6 +225,8 @@ const rootRouteChildren: RootRouteChildren = {
   ApiActionsRoute: ApiActionsRoute,
   ApiIncidentsRoute: ApiIncidentsRouteWithChildren,
   ApiTelemetryRoute: ApiTelemetryRoute,
+  IncidentsIncidentIdRoute: IncidentsIncidentIdRoute,
+  IncidentsIndexRoute: IncidentsIndexRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
