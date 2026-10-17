@@ -11,6 +11,12 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as ApiTelemetryRouteImport } from './routes/api/telemetry'
+import { Route as ApiV1EventsRouteImport } from './routes/api/v1/events'
+import { Route as ApiV1HealthRouteImport } from './routes/api/v1/health'
+import { Route as ApiV1IncidentsRouteImport } from './routes/api/v1/incidents'
+import { Route as ApiV1StatsRouteImport } from './routes/api/v1/stats'
+import { Route as ApiV1EventsEventIdRouteImport } from './routes/api/v1/events.$eventId'
+import { Route as ApiV1IncidentsIncidentIdRouteImport } from './routes/api/v1/incidents.$incidentId'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -22,31 +28,109 @@ const ApiTelemetryRoute = ApiTelemetryRouteImport.update({
   path: '/api/telemetry',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiV1EventsRoute = ApiV1EventsRouteImport.update({
+  id: '/api/v1/events',
+  path: '/api/v1/events',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiV1HealthRoute = ApiV1HealthRouteImport.update({
+  id: '/api/v1/health',
+  path: '/api/v1/health',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiV1IncidentsRoute = ApiV1IncidentsRouteImport.update({
+  id: '/api/v1/incidents',
+  path: '/api/v1/incidents',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiV1StatsRoute = ApiV1StatsRouteImport.update({
+  id: '/api/v1/stats',
+  path: '/api/v1/stats',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiV1EventsEventIdRoute = ApiV1EventsEventIdRouteImport.update({
+  id: '/$eventId',
+  path: '/$eventId',
+  getParentRoute: () => ApiV1EventsRoute,
+} as any)
+const ApiV1IncidentsIncidentIdRoute =
+  ApiV1IncidentsIncidentIdRouteImport.update({
+    id: '/$incidentId',
+    path: '/$incidentId',
+    getParentRoute: () => ApiV1IncidentsRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/api/telemetry': typeof ApiTelemetryRoute
+  '/api/v1/events': typeof ApiV1EventsRouteWithChildren
+  '/api/v1/health': typeof ApiV1HealthRoute
+  '/api/v1/incidents': typeof ApiV1IncidentsRouteWithChildren
+  '/api/v1/stats': typeof ApiV1StatsRoute
+  '/api/v1/events/$eventId': typeof ApiV1EventsEventIdRoute
+  '/api/v1/incidents/$incidentId': typeof ApiV1IncidentsIncidentIdRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/api/telemetry': typeof ApiTelemetryRoute
+  '/api/v1/events': typeof ApiV1EventsRouteWithChildren
+  '/api/v1/health': typeof ApiV1HealthRoute
+  '/api/v1/incidents': typeof ApiV1IncidentsRouteWithChildren
+  '/api/v1/stats': typeof ApiV1StatsRoute
+  '/api/v1/events/$eventId': typeof ApiV1EventsEventIdRoute
+  '/api/v1/incidents/$incidentId': typeof ApiV1IncidentsIncidentIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/api/telemetry': typeof ApiTelemetryRoute
+  '/api/v1/events': typeof ApiV1EventsRouteWithChildren
+  '/api/v1/health': typeof ApiV1HealthRoute
+  '/api/v1/incidents': typeof ApiV1IncidentsRouteWithChildren
+  '/api/v1/stats': typeof ApiV1StatsRoute
+  '/api/v1/events/$eventId': typeof ApiV1EventsEventIdRoute
+  '/api/v1/incidents/$incidentId': typeof ApiV1IncidentsIncidentIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/api/telemetry'
+  fullPaths:
+    | '/'
+    | '/api/telemetry'
+    | '/api/v1/events'
+    | '/api/v1/health'
+    | '/api/v1/incidents'
+    | '/api/v1/stats'
+    | '/api/v1/events/$eventId'
+    | '/api/v1/incidents/$incidentId'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/api/telemetry'
-  id: '__root__' | '/' | '/api/telemetry'
+  to:
+    | '/'
+    | '/api/telemetry'
+    | '/api/v1/events'
+    | '/api/v1/health'
+    | '/api/v1/incidents'
+    | '/api/v1/stats'
+    | '/api/v1/events/$eventId'
+    | '/api/v1/incidents/$incidentId'
+  id:
+    | '__root__'
+    | '/'
+    | '/api/telemetry'
+    | '/api/v1/events'
+    | '/api/v1/health'
+    | '/api/v1/incidents'
+    | '/api/v1/stats'
+    | '/api/v1/events/$eventId'
+    | '/api/v1/incidents/$incidentId'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   ApiTelemetryRoute: typeof ApiTelemetryRoute
+  ApiV1EventsRoute: typeof ApiV1EventsRouteWithChildren
+  ApiV1HealthRoute: typeof ApiV1HealthRoute
+  ApiV1IncidentsRoute: typeof ApiV1IncidentsRouteWithChildren
+  ApiV1StatsRoute: typeof ApiV1StatsRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -65,22 +149,83 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiTelemetryRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/v1/events': {
+      id: '/api/v1/events'
+      path: '/api/v1/events'
+      fullPath: '/api/v1/events'
+      preLoaderRoute: typeof ApiV1EventsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/v1/health': {
+      id: '/api/v1/health'
+      path: '/api/v1/health'
+      fullPath: '/api/v1/health'
+      preLoaderRoute: typeof ApiV1HealthRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/v1/incidents': {
+      id: '/api/v1/incidents'
+      path: '/api/v1/incidents'
+      fullPath: '/api/v1/incidents'
+      preLoaderRoute: typeof ApiV1IncidentsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/v1/stats': {
+      id: '/api/v1/stats'
+      path: '/api/v1/stats'
+      fullPath: '/api/v1/stats'
+      preLoaderRoute: typeof ApiV1StatsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/v1/events/$eventId': {
+      id: '/api/v1/events/$eventId'
+      path: '/$eventId'
+      fullPath: '/api/v1/events/$eventId'
+      preLoaderRoute: typeof ApiV1EventsEventIdRouteImport
+      parentRoute: typeof ApiV1EventsRoute
+    }
+    '/api/v1/incidents/$incidentId': {
+      id: '/api/v1/incidents/$incidentId'
+      path: '/$incidentId'
+      fullPath: '/api/v1/incidents/$incidentId'
+      preLoaderRoute: typeof ApiV1IncidentsIncidentIdRouteImport
+      parentRoute: typeof ApiV1IncidentsRoute
+    }
   }
 }
+
+interface ApiV1EventsRouteChildren {
+  ApiV1EventsEventIdRoute: typeof ApiV1EventsEventIdRoute
+}
+
+const ApiV1EventsRouteChildren: ApiV1EventsRouteChildren = {
+  ApiV1EventsEventIdRoute: ApiV1EventsEventIdRoute,
+}
+
+const ApiV1EventsRouteWithChildren = ApiV1EventsRoute._addFileChildren(
+  ApiV1EventsRouteChildren,
+)
+
+interface ApiV1IncidentsRouteChildren {
+  ApiV1IncidentsIncidentIdRoute: typeof ApiV1IncidentsIncidentIdRoute
+}
+
+const ApiV1IncidentsRouteChildren: ApiV1IncidentsRouteChildren = {
+  ApiV1IncidentsIncidentIdRoute: ApiV1IncidentsIncidentIdRoute,
+}
+
+const ApiV1IncidentsRouteWithChildren = ApiV1IncidentsRoute._addFileChildren(
+  ApiV1IncidentsRouteChildren,
+)
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   ApiTelemetryRoute: ApiTelemetryRoute,
+  ApiV1EventsRoute: ApiV1EventsRouteWithChildren,
+  ApiV1HealthRoute: ApiV1HealthRoute,
+  ApiV1IncidentsRoute: ApiV1IncidentsRouteWithChildren,
+  ApiV1StatsRoute: ApiV1StatsRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
-
-import type { getRouter } from './router.tsx'
-import type { createStart } from '@tanstack/react-start'
-declare module '@tanstack/react-start' {
-  interface Register {
-    ssr: true
-    router: Awaited<ReturnType<typeof getRouter>>
-  }
-}

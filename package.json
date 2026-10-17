@@ -8,6 +8,8 @@
   "scripts": {
     "dev": "vite dev --port 3000",
     "generate-routes": "tsr generate",
+    "db:migrate": "bun scripts/migrate.ts",
+    "db:create-key": "bun scripts/create-api-key.ts",
     "build": "vite build",
     "preview": "vite preview",
     "start": "node .output/server/index.mjs"
@@ -19,6 +21,7 @@
     "@tanstack/react-router-devtools": "1.167.2",
     "@tanstack/react-start": "1.169.3",
     "nitro": "3.0.260610-beta",
+    "postgres": "^3.4.9",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "tailwindcss": "^4.1.18"

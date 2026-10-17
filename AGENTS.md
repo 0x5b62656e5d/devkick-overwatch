@@ -10,7 +10,8 @@ incidents on a dashboard.
 - TanStack Start (SSR) + TanStack Router file routes, React 19, TypeScript
 - Tailwind CSS v4 (via `@tailwindcss/vite`, no config file)
 - Nitro server output; deploys to Railway via Railpack (`railpack.json`)
-- No database — in-memory state in `src/lib/incident-state.ts`
+- PostgreSQL (postgres.js) for the `/api/v1/*` backend; the dashboard
+  pipeline still uses in-memory state in `src/lib/incident-state.ts`
 
 ## Commands
 
@@ -19,16 +20,30 @@ incidents on a dashboard.
 - `bun run build` — production build (vite + nitro)
 - `bun start` — serve `.output/server`
 - `bun x tsc --noEmit` — typecheck
+- `bun run db:migrate` — apply `db/schema.sql` (needs `DATABASE_URL`)
+- `bun run db:create-key -- --tenant <slug>` — mint a tenant API key
 
 ## Layout
 
 - `src/routes/` — file routes; `api/` endpoints use `Route.server.handlers`
+  - `api/v1/` — tenant-scoped backend: `POST/GET /events`,
+    `GET /events/:id`, `POST/GET /incidents`, `GET/PATCH/DELETE
+    /incidents/:id`, `GET /stats`, `GET /health`
 - `src/lib/` — pipeline modules:
   - `telemetry.ts` — sample types, mock source, poller
   - `incident-detector.ts` — batch evaluation → incident candidates
   - `kev-client.ts` — KEV System One API integration
-  - `incident-state.ts` — incident records + action queue
+  - `incident-state.ts` — in-memory incident records + action queue
+  - `db.ts` — postgres.js pool + `withTenant` (sets `app.tenant_id` for RLS)
+  - `api.ts` — API-key auth (sha256 lookup), scopes, CORS, error mapping
+  - `rate-limit.ts` — per-key token bucket
+  - `events.ts` — event validation, fingerprint dedup, keyset pagination
+  - `incident-store.ts` — durable incident CRUD + event links
+  - `stats.ts` — tenant rollup for dashboards
 - `src/components/` — dashboard panels
+- `db/schema.sql` — tables + RLS; `scripts/` — migrate / create-api-key
+- Auth: `Authorization: Bearer <key>` or `X-Api-Key`; scopes `ingest`,
+  `read`, `write`; per-key RPM limit in `api_keys`
 
 ## Pipeline
 
