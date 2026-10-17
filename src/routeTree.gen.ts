@@ -11,6 +11,8 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as ApiTelemetryRouteImport } from './routes/api/telemetry'
+import { Route as IncidentsIndexRouteImport } from './routes/incidents/index'
+import { Route as IncidentsIncidentIdRouteImport } from './routes/incidents/$incidentId'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -22,31 +24,54 @@ const ApiTelemetryRoute = ApiTelemetryRouteImport.update({
   path: '/api/telemetry',
   getParentRoute: () => rootRouteImport,
 } as any)
+const IncidentsIndexRoute = IncidentsIndexRouteImport.update({
+  id: '/incidents/',
+  path: '/incidents/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const IncidentsIncidentIdRoute = IncidentsIncidentIdRouteImport.update({
+  id: '/incidents/$incidentId',
+  path: '/incidents/$incidentId',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/api/telemetry': typeof ApiTelemetryRoute
+  '/incidents/$incidentId': typeof IncidentsIncidentIdRoute
+  '/incidents/': typeof IncidentsIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/api/telemetry': typeof ApiTelemetryRoute
+  '/incidents/$incidentId': typeof IncidentsIncidentIdRoute
+  '/incidents': typeof IncidentsIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/api/telemetry': typeof ApiTelemetryRoute
+  '/incidents/$incidentId': typeof IncidentsIncidentIdRoute
+  '/incidents/': typeof IncidentsIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/api/telemetry'
+  fullPaths: '/' | '/api/telemetry' | '/incidents/$incidentId' | '/incidents/'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/api/telemetry'
-  id: '__root__' | '/' | '/api/telemetry'
+  to: '/' | '/api/telemetry' | '/incidents/$incidentId' | '/incidents'
+  id:
+    | '__root__'
+    | '/'
+    | '/api/telemetry'
+    | '/incidents/$incidentId'
+    | '/incidents/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   ApiTelemetryRoute: typeof ApiTelemetryRoute
+  IncidentsIncidentIdRoute: typeof IncidentsIncidentIdRoute
+  IncidentsIndexRoute: typeof IncidentsIndexRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -65,12 +90,28 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiTelemetryRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/incidents/': {
+      id: '/incidents/'
+      path: '/incidents'
+      fullPath: '/incidents/'
+      preLoaderRoute: typeof IncidentsIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/incidents/$incidentId': {
+      id: '/incidents/$incidentId'
+      path: '/incidents/$incidentId'
+      fullPath: '/incidents/$incidentId'
+      preLoaderRoute: typeof IncidentsIncidentIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   ApiTelemetryRoute: ApiTelemetryRoute,
+  IncidentsIncidentIdRoute: IncidentsIncidentIdRoute,
+  IncidentsIndexRoute: IncidentsIndexRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
