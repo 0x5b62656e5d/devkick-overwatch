@@ -10,14 +10,36 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as ReportsRouteImport } from './routes/reports'
+import { Route as TelemetryRouteImport } from './routes/telemetry'
+import { Route as VerificationRouteImport } from './routes/verification'
 import { Route as ApiIncidentsRouteImport } from './routes/api/incidents'
 import { Route as ApiTelemetryRouteImport } from './routes/api/telemetry'
+import { Route as ErrorsIndexRouteImport } from './routes/errors/index'
+import { Route as ErrorsErrorIdRouteImport } from './routes/errors/$errorId'
 import { Route as IncidentsIndexRouteImport } from './routes/incidents/index'
 import { Route as IncidentsIncidentIdRouteImport } from './routes/incidents/$incidentId'
+import { Route as SettingsIndexRouteImport } from './routes/settings/index'
+import { Route as SettingsAlertsRouteImport } from './routes/settings/alerts'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ReportsRoute = ReportsRouteImport.update({
+  id: '/reports',
+  path: '/reports',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const TelemetryRoute = TelemetryRouteImport.update({
+  id: '/telemetry',
+  path: '/telemetry',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const VerificationRoute = VerificationRouteImport.update({
+  id: '/verification',
+  path: '/verification',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiIncidentsRoute = ApiIncidentsRouteImport.update({
@@ -30,6 +52,16 @@ const ApiTelemetryRoute = ApiTelemetryRouteImport.update({
   path: '/api/telemetry',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ErrorsIndexRoute = ErrorsIndexRouteImport.update({
+  id: '/errors/',
+  path: '/errors/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ErrorsErrorIdRoute = ErrorsErrorIdRouteImport.update({
+  id: '/errors/$errorId',
+  path: '/errors/$errorId',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const IncidentsIndexRoute = IncidentsIndexRouteImport.update({
   id: '/incidents/',
   path: '/incidents/',
@@ -40,59 +72,118 @@ const IncidentsIncidentIdRoute = IncidentsIncidentIdRouteImport.update({
   path: '/incidents/$incidentId',
   getParentRoute: () => rootRouteImport,
 } as any)
+const SettingsIndexRoute = SettingsIndexRouteImport.update({
+  id: '/settings/',
+  path: '/settings/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SettingsAlertsRoute = SettingsAlertsRouteImport.update({
+  id: '/settings/alerts',
+  path: '/settings/alerts',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/reports': typeof ReportsRoute
+  '/telemetry': typeof TelemetryRoute
+  '/verification': typeof VerificationRoute
   '/api/incidents': typeof ApiIncidentsRoute
   '/api/telemetry': typeof ApiTelemetryRoute
+  '/errors/$errorId': typeof ErrorsErrorIdRoute
   '/incidents/$incidentId': typeof IncidentsIncidentIdRoute
+  '/settings/alerts': typeof SettingsAlertsRoute
+  '/errors/': typeof ErrorsIndexRoute
   '/incidents/': typeof IncidentsIndexRoute
+  '/settings/': typeof SettingsIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/reports': typeof ReportsRoute
+  '/telemetry': typeof TelemetryRoute
+  '/verification': typeof VerificationRoute
   '/api/incidents': typeof ApiIncidentsRoute
   '/api/telemetry': typeof ApiTelemetryRoute
+  '/errors/$errorId': typeof ErrorsErrorIdRoute
   '/incidents/$incidentId': typeof IncidentsIncidentIdRoute
+  '/settings/alerts': typeof SettingsAlertsRoute
+  '/errors': typeof ErrorsIndexRoute
   '/incidents': typeof IncidentsIndexRoute
+  '/settings': typeof SettingsIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/reports': typeof ReportsRoute
+  '/telemetry': typeof TelemetryRoute
+  '/verification': typeof VerificationRoute
   '/api/incidents': typeof ApiIncidentsRoute
   '/api/telemetry': typeof ApiTelemetryRoute
+  '/errors/$errorId': typeof ErrorsErrorIdRoute
   '/incidents/$incidentId': typeof IncidentsIncidentIdRoute
+  '/settings/alerts': typeof SettingsAlertsRoute
+  '/errors/': typeof ErrorsIndexRoute
   '/incidents/': typeof IncidentsIndexRoute
+  '/settings/': typeof SettingsIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/reports'
+    | '/telemetry'
+    | '/verification'
     | '/api/incidents'
     | '/api/telemetry'
+    | '/errors/$errorId'
     | '/incidents/$incidentId'
+    | '/settings/alerts'
+    | '/errors/'
     | '/incidents/'
+    | '/settings/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/reports'
+    | '/telemetry'
+    | '/verification'
     | '/api/incidents'
     | '/api/telemetry'
+    | '/errors/$errorId'
     | '/incidents/$incidentId'
+    | '/settings/alerts'
+    | '/errors'
     | '/incidents'
+    | '/settings'
   id:
     | '__root__'
     | '/'
+    | '/reports'
+    | '/telemetry'
+    | '/verification'
     | '/api/incidents'
     | '/api/telemetry'
+    | '/errors/$errorId'
     | '/incidents/$incidentId'
+    | '/settings/alerts'
+    | '/errors/'
     | '/incidents/'
+    | '/settings/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  ReportsRoute: typeof ReportsRoute
+  TelemetryRoute: typeof TelemetryRoute
+  VerificationRoute: typeof VerificationRoute
   ApiIncidentsRoute: typeof ApiIncidentsRoute
   ApiTelemetryRoute: typeof ApiTelemetryRoute
+  ErrorsErrorIdRoute: typeof ErrorsErrorIdRoute
   IncidentsIncidentIdRoute: typeof IncidentsIncidentIdRoute
+  SettingsAlertsRoute: typeof SettingsAlertsRoute
+  ErrorsIndexRoute: typeof ErrorsIndexRoute
   IncidentsIndexRoute: typeof IncidentsIndexRoute
+  SettingsIndexRoute: typeof SettingsIndexRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -102,6 +193,27 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/reports': {
+      id: '/reports'
+      path: '/reports'
+      fullPath: '/reports'
+      preLoaderRoute: typeof ReportsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/telemetry': {
+      id: '/telemetry'
+      path: '/telemetry'
+      fullPath: '/telemetry'
+      preLoaderRoute: typeof TelemetryRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/verification': {
+      id: '/verification'
+      path: '/verification'
+      fullPath: '/verification'
+      preLoaderRoute: typeof VerificationRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/incidents': {
@@ -118,6 +230,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiTelemetryRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/errors/': {
+      id: '/errors/'
+      path: '/errors'
+      fullPath: '/errors/'
+      preLoaderRoute: typeof ErrorsIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/errors/$errorId': {
+      id: '/errors/$errorId'
+      path: '/errors/$errorId'
+      fullPath: '/errors/$errorId'
+      preLoaderRoute: typeof ErrorsErrorIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/incidents/': {
       id: '/incidents/'
       path: '/incidents'
@@ -132,16 +258,46 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IncidentsIncidentIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/settings/': {
+      id: '/settings/'
+      path: '/settings'
+      fullPath: '/settings/'
+      preLoaderRoute: typeof SettingsIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/settings/alerts': {
+      id: '/settings/alerts'
+      path: '/settings/alerts'
+      fullPath: '/settings/alerts'
+      preLoaderRoute: typeof SettingsAlertsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  ReportsRoute: ReportsRoute,
+  TelemetryRoute: TelemetryRoute,
+  VerificationRoute: VerificationRoute,
   ApiIncidentsRoute: ApiIncidentsRoute,
   ApiTelemetryRoute: ApiTelemetryRoute,
+  ErrorsErrorIdRoute: ErrorsErrorIdRoute,
   IncidentsIncidentIdRoute: IncidentsIncidentIdRoute,
+  SettingsAlertsRoute: SettingsAlertsRoute,
+  ErrorsIndexRoute: ErrorsIndexRoute,
   IncidentsIndexRoute: IncidentsIndexRoute,
+  SettingsIndexRoute: SettingsIndexRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
+
+import type { getRouter } from './router.tsx'
+import type { createStart } from '@tanstack/react-start'
+declare module '@tanstack/react-start' {
+  interface Register {
+    ssr: true
+    router: Awaited<ReturnType<typeof getRouter>>
+  }
+}
