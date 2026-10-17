@@ -1,6 +1,9 @@
 import { minutesAgo, mulberry32 } from './clock'
 import type { KevDecision } from '#/lib/kev-client'
 
+/** Subset of the KEV decision the dashboard renders. */
+export type MockDecision = Pick<KevDecision, 'owner' | 'severity' | 'nextAction' | 'needsHuman'>
+
 export type Severity = 'critical' | 'error' | 'warning' | 'info'
 export type IncidentStatus = 'investigating' | 'monitoring' | 'resolved'
 
@@ -45,7 +48,7 @@ export interface Incident {
     explanation: string
     confidence: 'high' | 'medium' | 'low'
     stackTrace: string[]
-    decision: KevDecision
+    decision: MockDecision
   }
   timeline: {
     at: string
@@ -98,7 +101,7 @@ interface Spec {
   endpoint: { method: string; path: string }
   cause: { title: string; explanation: string; confidence: 'high' | 'medium' | 'low' }
   stack: string[]
-  decision: KevDecision
+  decision: MockDecision
   actions: Spec['endpoint'] extends never ? never : { label: string; cta: 'Run' | 'Create PR' | 'Create issue' | 'View dashboard' }[]
 }
 
