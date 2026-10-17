@@ -188,5 +188,4 @@ export function collectTelemetry(): TelemetrySnapshot {
   }
 }
 
-// TODO: implement the poller — call collectTelemetry() on an interval
-// and hand each snapshot to the incident detector.
+// The server-side poller in incident-monitor.ts consumes these snapshots.
