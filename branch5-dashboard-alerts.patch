@@ -1,0 +1,1348 @@
+From 3c5d270a9b90d40badf16bc5b9282f2f95560967 Mon Sep 17 00:00:00 2001
+From: Deniz Makaraci <bambukdeniz@Denizs-MacBook-Pro.local>
+Date: Sat, 17 Oct 2026 13:28:05 -0400
+Subject: [PATCH] Add incident dashboard and notification server
+
+Server ingests schema-v1 events at the SDK endpoint, folds them into a
+fingerprint-indexed incident store (auto-reopens resolved incidents on
+new matches, dedupes retries, optional JSON persistence), and re-assesses
+with the triage engine on every batch. Slack/Discord webhooks route by
+owning team with cooldown and urgent escalation payloads. Dashboard is
+zero-build vanilla JS: filtered incident list, detail reports with
+assessment evidence and timelines, acknowledge/resolve controls, and a
+manual error-report form.
+
+Generated with [Devin](https://devin.ai)
+
+Co-Authored-By: Devin <158243242+devin-ai-integration[bot]@users.noreply.github.com>
+---
+ package.json                         |  11 +-
+ server/README.md                     |  78 ++++++++++++++
+ server/e2e/dashboard.spec.js         |  44 ++++++++
+ server/overwatch.config.example.json |  24 +++++
+ server/package.json                  |  15 +++
+ server/playwright.config.js          |  12 +++
+ server/public/app.js                 | 151 ++++++++++++++++++++++++++
+ server/public/index.html             |  52 +++++++++
+ server/public/styles.css             |  51 +++++++++
+ server/src/api.js                    | 154 +++++++++++++++++++++++++++
+ server/src/config.js                 |  29 +++++
+ server/src/index.js                  |  56 ++++++++++
+ server/src/ingest.js                 |  71 ++++++++++++
+ server/src/notify.js                 | 146 +++++++++++++++++++++++++
+ server/src/store.js                  | 116 ++++++++++++++++++++
+ server/test/server.test.js           | 135 +++++++++++++++++++++++
+ triage/README.md                     |   2 +-
+ triage/src/index.d.ts                |   2 +
+ triage/src/index.js                  |   1 +
+ 19 files changed, 1147 insertions(+), 3 deletions(-)
+ create mode 100644 server/README.md
+ create mode 100644 server/e2e/dashboard.spec.js
+ create mode 100644 server/overwatch.config.example.json
+ create mode 100644 server/package.json
+ create mode 100644 server/playwright.config.js
+ create mode 100644 server/public/app.js
+ create mode 100644 server/public/index.html
+ create mode 100644 server/public/styles.css
+ create mode 100644 server/src/api.js
+ create mode 100644 server/src/config.js
+ create mode 100644 server/src/index.js
+ create mode 100644 server/src/ingest.js
+ create mode 100644 server/src/notify.js
+ create mode 100644 server/src/store.js
+ create mode 100644 server/test/server.test.js
+
+diff --git a/package.json b/package.json
+index a5a8820..96244f9 100644
+--- a/package.json
++++ b/package.json
+@@ -10,7 +10,10 @@
+     }
+   },
+   "types": "./src/index.d.ts",
+-  "files": ["src", "dist"],
++  "files": [
++    "src",
++    "dist"
++  ],
+   "sideEffects": false,
+   "engines": {
+     "node": ">=22"
+@@ -19,7 +22,11 @@
+     "build": "esbuild src/index.js --bundle --minify --format=iife --global-name=Overwatch --target=es2020 --outfile=dist/overwatch.min.js",
+     "test": "node --test test/*.test.js",
+     "test:browser": "npm run build && playwright test",
+-    "prepack": "npm run build"
++    "prepack": "npm run build",
++    "server": "node server/src/index.js",
++    "test:server": "node --test server/test/*.test.js",
++    "test:triage": "node --test triage/test/*.test.js",
++    "test:e2e": "playwright test -c server/playwright.config.js"
+   },
+   "devDependencies": {
+     "@playwright/test": "^1.56.0",
+diff --git a/server/README.md b/server/README.md
+new file mode 100644
+index 0000000..55d09af
+--- /dev/null
++++ b/server/README.md
+@@ -0,0 +1,78 @@
++# Overwatch server — dashboard & notifications
++
++`@overwatch/server` is the operator interface for Overwatch. It ingests browser
++error events (the same endpoint `@overwatch/browser` posts to), folds them into
++persistent incidents via `@overwatch/triage`, serves a web dashboard, and sends
++Slack/Discord notifications routed by owning team.
++
++Zero runtime dependencies; Node 22+. The triage engine is imported directly
++from `../triage` (same repo) — if you split packages, depend on
++`@overwatch/triage` instead.
++
++## Run
++
++```sh
++node server/src/index.js --config server/overwatch.config.example.json
++# or from the repo root:
++npm run server
++```
++
++Open `http://localhost:8090`. Configuration is `defaults < JSON file < env vars`
++(`OVERWATCH_PORT`, `OVERWATCH_STORE`, `SLACK_WEBHOOK_URL`,
++`DISCORD_WEBHOOK_URL`, `OVERWATCH_PUBLIC_URL`). See
++`overwatch.config.example.json`. Set `storePath` to persist incidents across
++restarts (debounced JSON writes); without it the store is in-memory.
++
++Point the browser SDK at this server:
++
++```js
++init({ endpoint: 'http://localhost:8090/v1/events', projectId: 'my-site' });
++```
++
++## API
++
++| Method | Path | Purpose |
++| --- | --- | --- |
++| POST | `/v1/events` | Ingest a schema-v1 event envelope (SDK endpoint) |
++| GET | `/api/incidents?status=active,acknowledged` | List incident summaries (`all` for everything) |
++| GET | `/api/incidents/:id` | Full report: assessment, evidence, timeline, latest events |
++| POST | `/api/incidents/:id/acknowledge` | `{by, note?}` — mark as being handled |
++| POST | `/api/incidents/:id/resolve` | `{by, note?}` — mark resolved |
++| POST | `/api/incidents/:id/reopen` | Manually reopen a resolved incident |
++| POST | `/api/reports` | Manual report form: `{title, description, page?, reporter?, severity?}` |
++| GET | `/api/health` | Health check |
++
++## Incident lifecycle
++
++`active → acknowledged → resolved`. New events matching a resolved incident
++automatically reopen it with a timeline entry. Every transition, event batch,
++severity change and notification attempt is recorded on the incident timeline.
++
++## Notifications
++
++Incidents recommending `escalate` or `investigate` notify a webhook (`observe`
++only when `notifyObserved: true`). Routing: `notify.routes` matches the assessed
++owner's `team` or `service`, falling back to the global `slack`/`discord`
++webhook. Escalating incidents send an urgent variant (`@here` on Discord).
++Repeat notifications for the same incident + recommendation are suppressed for
++`cooldownMs` (default 30 min); a severity change re-notifies because the
++recommendation changes. Failures are logged on the timeline, not retried.
++
++Webhook detection: `type: 'slack'|'discord'` or inferred from the URL. Payloads
++include severity, event count, estimated users, owner, action and a dashboard
++link (`publicUrl + #incident-id`).
++
++## Dashboard
++
++Vanilla JS, no build step. Filter tabs (Open/Active/Acknowledged/Resolved/All),
++auto-refresh every 10s, click a card for the full report: summary, the four
++triage assessments with evidence, timeline, latest events, and acknowledge /
++resolve controls. `+ Report issue` opens the manual submission form. Deep links:
++`/#incident-inc-xxxx`.
++
++## Tests
++
++```sh
++node --test server/test/*.test.js     # API, lifecycle, notifications, dedupe, reopen
++npx playwright test -c server/playwright.config.js   # e2e: boots the server, drives the UI
++```
+diff --git a/server/e2e/dashboard.spec.js b/server/e2e/dashboard.spec.js
+new file mode 100644
+index 0000000..eacf4f7
+--- /dev/null
++++ b/server/e2e/dashboard.spec.js
+@@ -0,0 +1,44 @@
++import { test, expect } from '@playwright/test';
++
++const T0 = Date.parse('2026-10-17T12:00:00.000Z');
++const ev = i => ({
++  id: `e2e-${i}`, timestamp: new Date(T0 + i * 1000).toISOString(),
++  type: 'network_error', fingerprint: 'fp-e2e',
++  page: { url: 'https://shop.example.com/checkout' },
++  browser: { name: 'Chrome', version: '141', os: 'macOS' },
++  error: { name: 'HTTPError', message: 'HTTP 500' },
++  request: { url: 'https://api.example.com/payments', method: 'POST', status: 500, transport: 'fetch' },
++});
++
++test('dashboard lists a seeded incident and shows its report', async ({ page, request }) => {
++  const res = await request.post('/v1/events', {
++    data: { schemaVersion: 1, events: Array.from({ length: 24 }, (_, i) => ev(i)) },
++  });
++  expect(res.status()).toBe(202);
++
++  await page.goto('/');
++  await expect(page.locator('.card')).toHaveCount(1);
++  await expect(page.locator('.card .title')).toContainText('api.example.com/payments');
++  await expect(page.locator('.card .badge.critical')).toHaveText('critical');
++
++  await page.locator('.card').click();
++  const dialog = page.locator('#detail');
++  await expect(dialog.locator('pre.summary')).toContainText('ESCALATE');
++  await expect(dialog.locator('.timeline li').first()).toContainText('detected');
++  await expect(dialog.locator('section.assess')).toContainText('Affected users');
++
++  page.once('dialog', d => d.accept('e2e-tester'));
++  await dialog.locator('[data-act="acknowledge"]').click();
++  await page.locator('nav #filters [data-filter="acknowledged"], nav button[data-filter="acknowledged"]').click();
++  await expect(page.locator('.card .badge.status-acknowledged')).toHaveText('acknowledged');
++});
++
++test('manual report form files an incident', async ({ page }) => {
++  await page.goto('/');
++  await page.locator('#new-report').click();
++  await page.locator('input[name="title"]').fill('E2E: login page blank');
++  await page.locator('textarea[name="description"]').fill('White screen after submitting credentials');
++  await page.locator('input[name="page"]').fill('https://shop.example.com/login');
++  await page.locator('#report-submit').click();
++  await expect(page.locator('#report-result')).toContainText('incident inc-');
++});
+diff --git a/server/overwatch.config.example.json b/server/overwatch.config.example.json
+new file mode 100644
+index 0000000..835a95a
+--- /dev/null
++++ b/server/overwatch.config.example.json
+@@ -0,0 +1,24 @@
++{
++  "port": 8090,
++  "publicUrl": "https://overwatch.acme.example",
++  "storePath": "./overwatch-store.json",
++  "triage": {
++    "serviceMap": [
++      { "host": "api.acme.com", "pathPrefix": "/payments", "service": "payments-api", "team": "payments" },
++      { "host": "api.acme.com", "service": "core-api", "team": "platform" },
++      { "host": "cdn.acme.com", "service": "cdn", "team": "platform" }
++    ],
++    "frontendOwner": { "service": "web-app", "team": "frontend" },
++    "criticalPaths": ["checkout", "payment", "login", "auth", "signup", "cart", "order"]
++  },
++  "notify": {
++    "slack": { "url": "https://hooks.slack.com/services/T000/B000/xxx" },
++    "discord": { "url": "https://discord.com/api/webhooks/123/abc" },
++    "routes": [
++      { "team": "payments", "webhook": { "type": "slack", "url": "https://hooks.slack.com/services/T000/B111/yyy" } },
++      { "team": "frontend", "webhook": { "type": "discord", "url": "https://discord.com/api/webhooks/456/def" } }
++    ],
++    "cooldownMs": 1800000,
++    "notifyObserved": false
++  }
++}
+diff --git a/server/package.json b/server/package.json
+new file mode 100644
+index 0000000..dab1f22
+--- /dev/null
++++ b/server/package.json
+@@ -0,0 +1,15 @@
++{
++  "name": "@overwatch/server",
++  "version": "0.1.0",
++  "description": "Overwatch incident server: ingestion API, incident store, triage assessments, dashboard and Slack/Discord alerting",
++  "type": "module",
++  "private": true,
++  "engines": {
++    "node": ">=22"
++  },
++  "scripts": {
++    "start": "node src/index.js",
++    "test": "node --test test/*.test.js",
++    "test:e2e": "playwright test -c playwright.config.js"
++  }
++}
+diff --git a/server/playwright.config.js b/server/playwright.config.js
+new file mode 100644
+index 0000000..0a00e57
+--- /dev/null
++++ b/server/playwright.config.js
+@@ -0,0 +1,12 @@
++import { defineConfig } from '@playwright/test';
++
++export default defineConfig({
++  testDir: './e2e',
++  webServer: {
++    command: 'node src/index.js --port 8123',
++    url: 'http://127.0.0.1:8123/api/health',
++    reuseExistingServer: false,
++    timeout: 15000,
++  },
++  use: { baseURL: 'http://127.0.0.1:8123', browserName: 'chromium' },
++});
+diff --git a/server/public/app.js b/server/public/app.js
+new file mode 100644
+index 0000000..9ed917c
+--- /dev/null
++++ b/server/public/app.js
+@@ -0,0 +1,151 @@
++const $ = selector => document.querySelector(selector);
++const state = { filter: 'open', incidents: [], detailId: location.hash.match(/incident-([\w-]+)/)?.[1] };
++
++const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
++const api = (path, options) => fetch(path, options && {
++  method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(options), ...options,
++});
++
++function statusParam() {
++  return state.filter === 'open' ? 'active,acknowledged' : state.filter;
++}
++
++function ago(iso) {
++  const s = Math.max(0, (Date.now() - Date.parse(iso)) / 1000);
++  if (s < 60) return `${Math.floor(s)}s ago`;
++  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
++  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
++  return `${Math.floor(s / 86400)}d ago`;
++}
++
++function badge(text, cls) { return `<span class="badge ${cls}">${esc(text)}</span>`; }
++
++function renderList() {
++  const main = $('#incidents');
++  if (!state.incidents.length) {
++    main.innerHTML = '<p class="empty">No incidents here. Everything is quiet.</p>';
++    return;
++  }
++  main.innerHTML = state.incidents.map(i => `
++    <div class="card ${i.severity?.level ?? 'low'}" data-id="${i.id}">
++      <div class="row">
++        ${badge(i.severity?.level ?? '?', i.severity?.level ?? 'low')}
++        <span class="title">${esc(i.title)}</span>
++        ${badge(i.action?.recommendation ?? '', i.action?.recommendation ?? 'unknown')}
++        ${badge(i.status, `status-${i.status}`)}
++        ${i.action?.needsHumanIntervention ? '<span class="alert-banner">HUMAN INTERVENTION</span>' : ''}
++      </div>
++      <div class="row meta">
++        <span>${i.eventCount} events</span>
++        <span>last seen ${ago(i.lastSeen)}</span>
++        ${i.ownership?.service ? `<span>owner: ${esc(i.ownership.service)}${i.ownership.team ? ` (${esc(i.ownership.team)})` : ''}</span>` : ''}
++        ${i.affectedUsers?.status === 'estimated' ? `<span>~${i.affectedUsers.min}-${i.affectedUsers.max} users</span>` : ''}
++        ${i.manual ? '<span>manual report</span>' : ''}
++      </div>
++    </div>`).join('');
++  main.querySelectorAll('.card').forEach(card =>
++    card.addEventListener('click', () => openDetail(card.dataset.id)));
++}
++
++function assessBlock(title, body) {
++  return `<div><h4>${title}</h4>${body}</div>`;
++}
++
++async function openDetail(id) {
++  const { incident: i } = await (await fetch(`/api/incidents/${id}`)).json();
++  if (!i) return;
++  state.detailId = id;
++  history.replaceState(null, '', `#incident-${id}`);
++  const a = i.assessment ?? {};
++  const users = a.impact?.affectedUsers;
++  const canAct = i.status !== 'resolved';
++
++  $('#detail-body').innerHTML = `
++    <div class="row">
++      ${badge(a.severity?.level ?? '?', a.severity?.level ?? 'low')}
++      <h2 style="flex:1">${esc(i.title)}</h2>
++      <button data-close>Close</button>
++    </div>
++    ${a.action?.needsHumanIntervention ? '<p class="alert-banner">Immediate human intervention recommended.</p>' : ''}
++    <pre class="summary">${esc(a.summary ?? '')}</pre>
++    <section class="assess">
++      ${assessBlock('Severity', `${esc(a.severity?.level ?? 'unknown')} (score ${a.severity?.score ?? '?'}, ${esc(a.severity?.confidence ?? '?')} confidence)
++        <ul class="evidence">${(a.severity?.evidence ?? []).map(e => `<li>${esc(e)}</li>`).join('')}</ul>`)}
++      ${assessBlock('Affected users', users?.status === 'estimated'
++        ? `${users.min}-${users.max} (${esc(users.confidence)} confidence)<ul class="evidence">${(a.impact?.evidence ?? []).map(e => `<li>${esc(e)}</li>`).join('')}</ul>`
++        : `unknown — ${esc(users?.reason ?? '')}`)}
++      ${assessBlock('Likely owner', a.ownership?.status === 'identified'
++        ? `${esc(a.ownership.service)}${a.ownership.team ? ` / ${esc(a.ownership.team)}` : ''} (${esc(a.ownership.confidence)})<ul class="evidence">${(a.ownership.evidence ?? []).map(e => `<li>${esc(e)}</li>`).join('')}</ul>`
++        : `unknown — ${esc(a.ownership?.reason ?? '')}`)}
++      ${assessBlock('Verification / action', `${esc(a.action?.recommendation ?? 'unknown')} — ${esc(a.action?.rationale ?? '')}
++        <ul class="evidence">${(a.action?.evidence ?? []).map(e => `<li>${esc(e)}</li>`).join('')}</ul>`)}
++    </section>
++    <section class="row">
++      ${i.status === 'active' ? '<button data-act="acknowledge">Acknowledge</button>' : ''}
++      ${canAct ? '<button data-act="resolve">Resolve</button>' : '<button data-act="reopen">Reopen</button>'}
++      <span class="meta">${i.acknowledgedBy ? `ack by ${esc(i.acknowledgedBy)} · ` : ''}${i.resolvedBy ? `resolved by ${esc(i.resolvedBy)}${i.resolutionNote ? `: ${esc(i.resolutionNote)}` : ''}` : ''}</span>
++    </section>
++    <section>
++      <h3>Timeline</h3>
++      <ul class="timeline">${i.timeline.map(t =>
++        `<li><span class="kind">${esc(t.kind)}</span> <span class="meta">${ago(t.at)}</span><br>${esc(t.detail)}</li>`).join('')}</ul>
++    </section>
++    <section>
++      <h3>Latest events${i.truncatedEvents ? ` (showing ${i.events.length} of ${i.eventCount + 0})` : ''}</h3>
++      <table class="events"><tr><th>time</th><th>type</th><th>error</th><th>request</th></tr>
++      ${i.events.slice(-20).reverse().map(e => `<tr>
++        <td class="meta">${new Date(e.timestamp).toLocaleTimeString()}</td>
++        <td>${esc(e.type)}</td>
++        <td>${esc(`${e.error?.name ?? ''} ${e.error?.message ?? ''}`.slice(0, 90))}</td>
++        <td class="meta">${e.request ? esc(`${e.request.status ?? ''} ${e.request.url?.slice(0, 60) ?? ''}`) : ''}</td>
++      </tr>`).join('')}</table>
++    </section>`;
++
++  $('#detail-body [data-close]').onclick = () => $('#detail').close();
++  $('#detail-body').querySelectorAll('[data-act]').forEach(btn => btn.onclick = async () => {
++    const by = localStorage.overwatchUser ??= prompt('Your name?') ?? 'anonymous';
++    let note;
++    if (btn.dataset.act === 'resolve') note = prompt('Resolution note (optional)') ?? undefined;
++    await api(`/api/incidents/${id}/${btn.dataset.act}`, { by, note });
++    $('#detail').close();
++    refresh();
++  });
++  $('#detail').onclose = () => history.replaceState(null, '', '/');
++  $('#detail').showModal();
++}
++
++async function refresh() {
++  try {
++    const { incidents } = await (await fetch(`/api/incidents?status=${statusParam()}`)).json();
++    state.incidents = incidents;
++    renderList();
++  } catch { /* keep last render */ }
++}
++
++$('#filters').addEventListener('click', e => {
++  const btn = e.target.closest('button');
++  if (!btn) return;
++  state.filter = btn.dataset.filter;
++  $('#filters').querySelectorAll('button').forEach(b => b.classList.toggle('active', b === btn));
++  refresh();
++});
++
++$('#new-report').onclick = () => { $('#report-result').value = ''; $('#report-form').showModal(); };
++$('#reporter-name').value = localStorage.overwatchUser ?? '';
++$('#report').addEventListener('submit', async e => {
++  if (e.submitter?.value === 'cancel') return;
++  e.preventDefault();
++  const data = Object.fromEntries(new FormData(e.target));
++  localStorage.overwatchUser = data.reporter || '';
++  const res = await api('/api/reports', data);
++  const out = $('#report-result');
++  if (res.ok) {
++    const { incident } = await res.json();
++    out.value = `Report filed as incident ${incident?.id ?? ''} (${incident?.severity?.level ?? '?'})`;
++    refresh();
++  } else out.value = `Failed: ${(await res.json()).error}`;
++});
++
++refresh();
++setInterval(refresh, 10000);
++if (state.detailId) openDetail(state.detailId).catch(() => {});
+diff --git a/server/public/index.html b/server/public/index.html
+new file mode 100644
+index 0000000..404f58c
+--- /dev/null
++++ b/server/public/index.html
+@@ -0,0 +1,52 @@
++<!doctype html>
++<html lang="en">
++<head>
++<meta charset="utf-8">
++<meta name="viewport" content="width=device-width, initial-scale=1">
++<title>Overwatch — Incidents</title>
++<link rel="stylesheet" href="/styles.css">
++</head>
++<body>
++<header>
++  <h1>Overwatch</h1>
++  <nav id="filters">
++    <button data-filter="open" class="active">Open</button>
++    <button data-filter="active">Active</button>
++    <button data-filter="acknowledged">Acknowledged</button>
++    <button data-filter="resolved">Resolved</button>
++    <button data-filter="all">All</button>
++  </nav>
++  <button id="new-report">+ Report issue</button>
++</header>
++
++<main id="incidents" aria-live="polite"></main>
++
++<dialog id="detail">
++  <article id="detail-body"></article>
++</dialog>
++
++<dialog id="report-form">
++  <form method="dialog" id="report">
++    <h2>Report a problem</h2>
++    <label>Title <input name="title" required maxlength="140"></label>
++    <label>Description <textarea name="description" required rows="4"></textarea></label>
++    <label>Page URL <input name="page" type="url" placeholder="https://…"></label>
++    <label>Severity hint
++      <select name="severity">
++        <option value="">let triage decide</option>
++        <option value="high">high</option>
++        <option value="critical">critical</option>
++      </select>
++    </label>
++    <label>Your name <input name="reporter" id="reporter-name" maxlength="80"></label>
++    <menu>
++      <button value="cancel" formnovalidate>Cancel</button>
++      <button id="report-submit" value="default">Submit report</button>
++    </menu>
++    <output id="report-result"></output>
++  </form>
++</dialog>
++
++<script src="/app.js" type="module"></script>
++</body>
++</html>
+diff --git a/server/public/styles.css b/server/public/styles.css
+new file mode 100644
+index 0000000..0569506
+--- /dev/null
++++ b/server/public/styles.css
+@@ -0,0 +1,51 @@
++:root {
++  --bg: #0f1115; --panel: #171b22; --border: #2a3038; --text: #e5e7eb; --muted: #9ca3af;
++  --critical: #dc2626; --high: #ea580c; --medium: #ca8a04; --low: #6b7280;
++}
++* { box-sizing: border-box; }
++body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.5 system-ui, sans-serif; }
++header { display: flex; gap: 16px; align-items: center; padding: 12px 20px; border-bottom: 1px solid var(--border); }
++h1 { font-size: 18px; margin: 0; }
++nav { display: flex; gap: 6px; flex: 1; }
++button { background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 6px 12px; cursor: pointer; }
++button:hover { border-color: var(--muted); }
++button.active { background: #1f6feb; border-color: #1f6feb; }
++main { max-width: 1100px; margin: 20px auto; padding: 0 20px; }
++.card { background: var(--panel); border: 1px solid var(--border); border-left: 4px solid var(--low); border-radius: 8px; padding: 14px 16px; margin-bottom: 10px; cursor: pointer; }
++.card:hover { border-color: var(--muted); }
++.card.critical { border-left-color: var(--critical); }
++.card.high { border-left-color: var(--high); }
++.card.medium { border-left-color: var(--medium); }
++.card.low { border-left-color: var(--low); }
++.row { display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap; }
++.title { font-weight: 600; font-size: 15px; }
++.badge { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 10px; text-transform: uppercase; }
++.badge.critical { background: var(--critical); } .badge.high { background: var(--high); }
++.badge.medium { background: var(--medium); color: #111; } .badge.low { background: var(--low); }
++.badge.escalate { background: var(--critical); } .badge.investigate { background: #1f6feb; }
++.badge.observe { background: var(--low); } .badge.unknown { background: #4b5563; }
++.badge.status-active { outline: 1px solid var(--high); color: var(--high); background: transparent; }
++.badge.status-acknowledged { outline: 1px solid #1f6feb; color: #60a5fa; background: transparent; }
++.badge.status-resolved { outline: 1px solid #16a34a; color: #4ade80; background: transparent; }
++.meta { color: var(--muted); font-size: 12px; }
++.alert-banner { color: var(--critical); font-weight: 700; }
++dialog { background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 10px; max-width: 860px; width: 92vw; max-height: 88vh; }
++dialog::backdrop { background: rgba(0,0,0,.6); }
++section { margin: 14px 0; }
++h2, h3 { margin: 0 0 8px; }
++.assess { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; }
++.assess > div { border: 1px solid var(--border); border-radius: 8px; padding: 10px; }
++.assess h4 { margin: 0 0 6px; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .05em; }
++ul.evidence { margin: 6px 0 0; padding-left: 18px; color: var(--muted); font-size: 12px; }
++.timeline { border-left: 2px solid var(--border); margin: 10px 0 0 6px; padding-left: 16px; }
++.timeline li { margin-bottom: 8px; list-style: none; position: relative; }
++.timeline li::before { content: ''; position: absolute; left: -21px; top: 6px; width: 8px; height: 8px; border-radius: 50%; background: var(--low); }
++.timeline .kind { font-weight: 600; }
++table.events { width: 100%; border-collapse: collapse; font-size: 12px; }
++table.events td, table.events th { border-bottom: 1px solid var(--border); padding: 4px 6px; text-align: left; }
++form label { display: block; margin-bottom: 10px; color: var(--muted); }
++input, textarea, select { width: 100%; margin-top: 4px; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 7px 9px; }
++menu { display: flex; justify-content: flex-end; gap: 8px; padding: 0; }
++output { display: block; margin-top: 8px; min-height: 18px; }
++.empty { color: var(--muted); text-align: center; padding: 60px 0; }
++pre.summary { white-space: pre-wrap; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 10px; font-size: 13px; }
+diff --git a/server/src/api.js b/server/src/api.js
+new file mode 100644
+index 0000000..155682a
+--- /dev/null
++++ b/server/src/api.js
+@@ -0,0 +1,154 @@
++import { ingestBatch } from './ingest.js';
++import { manualReportEvent, notifyIncident } from './notify.js';
++
++const MAX_BODY = 256 * 1024;
++
++function readBody(request) {
++  return new Promise((resolve, reject) => {
++    const chunks = [];
++    let size = 0;
++    request.on('data', chunk => {
++      size += chunk.length;
++      if (size > MAX_BODY) { reject(Object.assign(new Error('payload too large'), { status: 413 })); request.destroy(); return; }
++      chunks.push(chunk);
++    });
++    request.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
++    request.on('error', reject);
++  });
++}
++
++function json(response, status, data) {
++  response.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
++  response.end(JSON.stringify(data));
++}
++
++function summarize(incident) {
++  const a = incident.assessment ?? {};
++  return {
++    id: incident.id,
++    title: incident.title,
++    status: incident.status,
++    severity: a.severity && { level: a.severity.level, confidence: a.severity.confidence, trend: a.severity.trend },
++    action: a.action,
++    ownership: a.ownership,
++    affectedUsers: a.impact?.affectedUsers,
++    eventCount: incident.events.length,
++    fingerprints: incident.fingerprints,
++    firstSeen: incident.firstSeen,
++    lastSeen: incident.lastSeen,
++    summary: incident.assessment?.summary,
++    manual: incident.manual,
++    acknowledgedBy: incident.acknowledgedBy,
++    resolvedBy: incident.resolvedBy,
++  };
++}
++
++function detail(incident) {
++  return {
++    ...summarize(incident),
++    assessment: incident.assessment,
++    timeline: incident.timeline,
++    notifications: incident.notifications,
++    acknowledgedAt: incident.acknowledgedAt,
++    resolvedAt: incident.resolvedAt,
++    resolutionNote: incident.resolutionNote,
++    events: incident.events.slice(-100),
++    truncatedEvents: Math.max(0, incident.events.length - 100),
++  };
++}
++
++async function afterIngest(touched, config, store) {
++  for (const { incident } of touched) {
++    await notifyIncident(incident, config, (inc, kind, text) => store.log(inc, kind, text)).catch(() => {});
++  }
++}
++
++/**
++ * Route table for the HTTP server. Returns true when the request was handled.
++ */
++export function createApi({ store, config }) {
++  const routes = [
++    ['POST', /^\/v1\/events$/, async (req, res) => {
++      const body = JSON.parse(await readBody(req));
++      const { triageResult, touched } = await ingestBatch(store, body, config);
++      await afterIngest(touched, config, store);
++      json(res, 202, {
++        accepted: triageResult.eventCount,
++        dropped: triageResult.droppedEvents,
++        incidents: touched.map(t => t.incident.id),
++      });
++    }],
++
++    ['GET', /^\/api\/health$/, async (req, res) => {
++      json(res, 200, { ok: true, incidents: store.incidents.size });
++    }],
++
++    ['GET', /^\/api\/incidents$/, async (req, res, url) => {
++      const status = url.searchParams.get('status') ?? 'active,acknowledged';
++      const wanted = status === 'all' ? undefined : status.split(',');
++      const list = wanted ? wanted.flatMap(s => store.list(s)) : store.list('all');
++      json(res, 200, { incidents: list.map(summarize) });
++    }],
++
++    ['GET', /^\/api\/incidents\/([\w-]+)$/, async (req, res, url, m) => {
++      const incident = store.get(m[1]);
++      if (!incident) return json(res, 404, { error: 'incident not found' });
++      json(res, 200, { incident: detail(incident) });
++    }],
++
++    ['POST', /^\/api\/incidents\/([\w-]+)\/(acknowledge|resolve|reopen)$/, async (req, res, url, m) => {
++      const incident = store.get(m[1]);
++      if (!incident) return json(res, 404, { error: 'incident not found' });
++      const body = JSON.parse(await readBody(req) || '{}');
++      const by = String(body.by || 'anonymous').slice(0, 128);
++      const now = new Date().toISOString();
++
++      if (m[2] === 'acknowledge') {
++        if (incident.status !== 'active') return json(res, 409, { error: `cannot acknowledge a ${incident.status} incident` });
++        incident.status = 'acknowledged';
++        incident.acknowledgedAt = now;
++        incident.acknowledgedBy = by;
++        store.log(incident, 'acknowledged', `acknowledged by ${by}${body.note ? `: ${body.note}` : ''}`);
++      } else if (m[2] === 'resolve') {
++        if (incident.status === 'resolved') return json(res, 409, { error: 'incident already resolved' });
++        incident.status = 'resolved';
++        incident.resolvedAt = now;
++        incident.resolvedBy = by;
++        incident.resolutionNote = typeof body.note === 'string' ? body.note.slice(0, 500) : undefined;
++        store.log(incident, 'resolved', `resolved by ${by}${incident.resolutionNote ? `: ${incident.resolutionNote}` : ''}`);
++      } else {
++        if (incident.status !== 'resolved') return json(res, 409, { error: 'only resolved incidents can be reopened' });
++        incident.status = 'active';
++        incident.resolvedAt = incident.resolvedBy = incident.resolutionNote = undefined;
++        store.log(incident, 'reopened', `reopened by ${by}`);
++      }
++      json(res, 200, { incident: summarize(incident) });
++    }],
++
++    ['POST', /^\/api\/reports$/, async (req, res) => {
++      const body = JSON.parse(await readBody(req));
++      const event = manualReportEvent(body);
++      const { touched } = await ingestBatch(store, { schemaVersion: 1, events: [event] }, config);
++      await afterIngest(touched, config, store);
++      const incident = touched[0]?.incident;
++      json(res, 201, { incidentId: incident?.id, incident: incident && summarize(incident) });
++    }],
++  ];
++
++  return async function handle(request, response, url) {
++    for (const [method, pattern, handler] of routes) {
++      if (request.method !== method) continue;
++      const m = url.pathname.match(pattern);
++      if (!m) continue;
++      try {
++        await handler(request, response, url, m);
++      } catch (error) {
++        const status = error.status ?? (error instanceof SyntaxError || error instanceof TypeError ? 400 : 500);
++        json(response, status, { error: status === 500 ? 'internal error' : error.message });
++        if (status === 500) console.error('[overwatch]', error);
++      }
++      return true;
++    }
++    return false;
++  };
++}
+diff --git a/server/src/config.js b/server/src/config.js
+new file mode 100644
+index 0000000..a600076
+--- /dev/null
++++ b/server/src/config.js
+@@ -0,0 +1,29 @@
++import { readFileSync } from 'node:fs';
++
++/**
++ * Config precedence: defaults < JSON config file < environment variables.
++ * Env vars: OVERWATCH_PORT, OVERWATCH_PUBLIC_URL, OVERWATCH_STORE,
++ *           SLACK_WEBHOOK_URL, DISCORD_WEBHOOK_URL
++ */
++export function loadConfig(configPath) {
++  const file = configPath ? JSON.parse(readFileSync(configPath, 'utf8')) : {};
++  return {
++    port: Number(process.env.OVERWATCH_PORT ?? file.port ?? 8090),
++    publicUrl: process.env.OVERWATCH_PUBLIC_URL ?? file.publicUrl,
++    storePath: process.env.OVERWATCH_STORE ?? file.storePath,
++    triage: file.triage?.criticalPaths
++      // JSON config can only carry strings; compile path patterns to RegExp.
++      ? { ...file.triage, criticalPaths: file.triage.criticalPaths.map(p => p instanceof RegExp ? p : new RegExp(p, 'i')) }
++      : (file.triage ?? {}),
++    notify: {
++      // Global defaults; per-team routes below override them.
++      slack: process.env.SLACK_WEBHOOK_URL ? { url: process.env.SLACK_WEBHOOK_URL } : file.notify?.slack,
++      discord: process.env.DISCORD_WEBHOOK_URL ? { url: process.env.DISCORD_WEBHOOK_URL } : file.notify?.discord,
++      routes: file.notify?.routes ?? [],
++      cooldownMs: file.notify?.cooldownMs ?? 30 * 60 * 1000,
++      // observe-level incidents only notify when this is true
++      notifyObserved: file.notify?.notifyObserved ?? false,
++      timeoutMs: file.notify?.timeoutMs ?? 5000,
++    },
++  };
++}
+diff --git a/server/src/index.js b/server/src/index.js
+new file mode 100644
+index 0000000..ae30df8
+--- /dev/null
++++ b/server/src/index.js
+@@ -0,0 +1,56 @@
++import { createServer as httpServer } from 'node:http';
++import { readFile } from 'node:fs/promises';
++import { fileURLToPath } from 'node:url';
++import { join, extname, normalize } from 'node:path';
++import { loadConfig } from './config.js';
++import { IncidentStore } from './store.js';
++import { createApi } from './api.js';
++
++const PUBLIC = fileURLToPath(new URL('../public', import.meta.url));
++const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml' };
++
++export function createServer(config) {
++  const store = new IncidentStore({ storePath: config.storePath });
++  const api = createApi({ store, config });
++
++  const server = httpServer(async (request, response) => {
++    const url = new URL(request.url, 'http://localhost');
++    if (await api(request, response, url)) return;
++
++    if (request.method === 'GET') {
++      const path = url.pathname === '/' ? '/index.html' : url.pathname;
++      const file = normalize(join(PUBLIC, path));
++      if (file.startsWith(PUBLIC)) {
++        try {
++          const body = await readFile(file);
++          response.writeHead(200, { 'Content-Type': MIME[extname(file)] ?? 'application/octet-stream' });
++          return response.end(body);
++        } catch { /* fall through to 404 */ }
++      }
++    }
++    response.writeHead(404, { 'Content-Type': 'application/json' });
++    response.end(JSON.stringify({ error: 'not found' }));
++  });
++
++  return { server, store };
++}
++
++export async function start(configPath) {
++  const config = loadConfig(configPath);
++  const { server, store } = createServer(config);
++  await new Promise(resolve => server.listen(config.port, resolve));
++  const { port } = server.address();
++  console.log(`[overwatch] dashboard: http://localhost:${port}`);
++  console.log(`[overwatch] ingestion: POST http://localhost:${port}/v1/events`);
++  const webhooks = [config.notify.slack, config.notify.discord, ...(config.notify.routes ?? []).map(r => r.webhook ?? r.slack ?? r.discord)].filter(Boolean);
++  console.log(`[overwatch] notifications: ${webhooks.length ? `${webhooks.length} webhook target(s)` : 'no webhooks configured'}`);
++  return { server, store, config };
++}
++
++const isMain = process.argv[1] === fileURLToPath(import.meta.url);
++if (isMain) {
++  const args = process.argv.slice(2);
++  const configPath = args.includes('--config') ? args[args.indexOf('--config') + 1] : undefined;
++  if (args.includes('--port')) process.env.OVERWATCH_PORT = args[args.indexOf('--port') + 1];
++  start(configPath).catch(error => { console.error(error); process.exit(1); });
++}
+diff --git a/server/src/ingest.js b/server/src/ingest.js
+new file mode 100644
+index 0000000..af6d2fd
+--- /dev/null
++++ b/server/src/ingest.js
+@@ -0,0 +1,71 @@
++import { triage } from '../../triage/src/index.js';
++
++function assessmentFor(triageResult, fingerprints) {
++  if (triageResult.incidents.length === 1) return triageResult.incidents[0];
++  // Re-triaging a merged event set may split it; keep the assessment that
++  // shares the most fingerprints with this stored incident.
++  return triageResult.incidents
++    .map(incident => ({
++      incident,
++      overlap: incident.fingerprints.filter(fp => fingerprints.includes(fp)).length,
++    }))
++    .sort((a, b) => b.overlap - a.overlap || b.incident.eventCount - a.incident.eventCount)[0].incident;
++}
++
++function applyAssessment(incident, assessment, store) {
++  const previous = incident.assessment?.severity?.level;
++  incident.assessment = assessment;
++  incident.title = assessment.title;
++  incident.severity = assessment.severity;
++  incident.firstSeen = assessment.firstSeen;
++  incident.manual = incident.manual || assessment.events.some(e => e.manual);
++  if (previous && previous !== assessment.severity.level) {
++    store.log(incident, 'assessment', `severity changed ${previous} -> ${assessment.severity.level}`);
++  }
++}
++
++/**
++ * Triages a batch of events and folds the resulting incidents into the store:
++ * fingerprint matches merge into existing incidents (resolved incidents
++ * auto-reopen), unmatched fingerprints create new ones.
++ */
++export function ingestBatch(store, input, config = {}) {
++  const result = triage(input, { now: Date.now(), ...config.triage });
++  const touched = [];
++
++  for (const assessed of result.incidents) {
++    const existing = store.match(assessed.fingerprints);
++    if (!existing) {
++      const incident = store.create({
++        fingerprints: [...assessed.fingerprints],
++        events: [],
++        firstSeen: assessed.firstSeen,
++        lastSeen: assessed.lastSeen,
++      });
++      store.merge(incident, assessed.events, assessed.fingerprints);
++      applyAssessment(incident, assessed, store);
++      store.log(incident, 'detected', `incident detected from ${assessed.eventCount} event(s)`);
++      touched.push({ incident, isNew: true, previousRecommendation: null });
++      continue;
++    }
++
++    const previousRecommendation = existing.assessment?.action?.recommendation ?? null;
++    const added = store.merge(existing, assessed.events, assessed.fingerprints);
++    if (added === 0) continue;
++    store.log(existing, 'events', `${added} new event(s)`);
++
++    // Re-assess against the incident's full event history so severity and
++    // trend reflect accumulated evidence, not just the latest batch.
++    const reassessed = triage(existing.events, { now: Date.now(), ...config.triage });
++    applyAssessment(existing, assessmentFor(reassessed, existing.fingerprints), store);
++
++    if (existing.status === 'resolved') {
++      existing.status = 'active';
++      existing.resolvedAt = existing.resolvedBy = existing.resolutionNote = undefined;
++      store.log(existing, 'reopened', 'new matching errors after resolution');
++    }
++    touched.push({ incident: existing, isNew: false, previousRecommendation });
++  }
++
++  return { triageResult: result, touched };
++}
+diff --git a/server/src/notify.js b/server/src/notify.js
+new file mode 100644
+index 0000000..cc1066c
+--- /dev/null
++++ b/server/src/notify.js
+@@ -0,0 +1,146 @@
++import { randomUUID } from 'node:crypto';
++
++function hash(text) {
++  let h = 0x811c9dc5;
++  for (let i = 0; i < text.length; i++) h = Math.imul(h ^ text.charCodeAt(i), 0x01000193);
++  return (h >>> 0).toString(16).padStart(8, '0');
++}
++
++/** Build a synthetic schema-v1 event from the manual report form. */
++export function manualReportEvent({ title, description, page, reporter, severity }) {
++  if (typeof title !== 'string' || !title.trim()) throw new TypeError('title is required');
++  if (typeof description !== 'string' || !description.trim()) throw new TypeError('description is required');
++  return {
++    id: `manual-${randomUUID()}`,
++    timestamp: new Date().toISOString(),
++    type: 'javascript_error',
++    fingerprint: `manual-${hash(title.trim().toLowerCase())}`,
++    page: { url: typeof page === 'string' && page ? page : 'manual://report' },
++    browser: { name: 'unknown', version: '', os: 'unknown' },
++    error: {
++      name: severity && ['critical', 'high'].includes(severity) ? 'ManualReportCritical' : 'ManualReport',
++      message: `${title.trim()}: ${description.trim()}`.slice(0, 1024),
++    },
++    manual: { reporter: String(reporter || 'anonymous').slice(0, 128) },
++    source: { url: page || 'manual://report', line: 0, column: 0 },
++  };
++}
++
++function webhookType(target) {
++  if (target.type) return target.type;
++  return /discord(?:app)?\.com/.test(target.url) ? 'discord' : 'slack';
++}
++
++function link(config, incident) {
++  const base = config.publicUrl ?? 'http://localhost:8090';
++  return `${base}/#incident-${incident.id}`;
++}
++
++function slackPayload(incident, config, urgent) {
++  const a = incident.assessment;
++  const owner = a.ownership.status === 'identified'
++    ? `${a.ownership.service}${a.ownership.team ? ` (${a.ownership.team})` : ''}` : 'unknown';
++  const users = a.impact.affectedUsers.status === 'estimated'
++    ? `${a.impact.affectedUsers.min}-${a.impact.affectedUsers.max}` : 'unknown';
++  const text = `${urgent ? ':rotating_light: ' : ''}*${a.severity.level.toUpperCase()}* ${incident.title}`;
++  return {
++    text,
++    blocks: [
++      { type: 'section', text: { type: 'mrkdwn', text } },
++      { type: 'section', fields: [
++        { type: 'mrkdwn', text: `*Events:*\n${incident.events.length}` },
++        { type: 'mrkdwn', text: `*Affected users:*\n${users}` },
++        { type: 'mrkdwn', text: `*Owner:*\n${owner}` },
++        { type: 'mrkdwn', text: `*Action:*\n${a.action.recommendation}${a.action.needsHumanIntervention ? ' — human needed' : ''}` },
++      ] },
++      { type: 'section', text: { type: 'mrkdwn', text: `<${link(config, incident)}|Open in Overwatch>` } },
++    ],
++  };
++}
++
++function discordPayload(incident, config, urgent) {
++  const a = incident.assessment;
++  const colors = { critical: 0xdc2626, high: 0xea580c, medium: 0xca8a04, low: 0x6b7280, unknown: 0x6b7280 };
++  const owner = a.ownership.status === 'identified'
++    ? `${a.ownership.service}${a.ownership.team ? ` (${a.ownership.team})` : ''}` : 'unknown';
++  const users = a.impact.affectedUsers.status === 'estimated'
++    ? `${a.impact.affectedUsers.min}-${a.impact.affectedUsers.max}` : 'unknown';
++  return {
++    content: urgent ? `@here **${a.severity.level.toUpperCase()}** incident needs human intervention` : undefined,
++    embeds: [{
++      title: `[${a.severity.level.toUpperCase()}] ${incident.title}`.slice(0, 256),
++      url: link(config, incident),
++      color: colors[a.severity.level] ?? colors.unknown,
++      fields: [
++        { name: 'Events', value: String(incident.events.length), inline: true },
++        { name: 'Affected users', value: users, inline: true },
++        { name: 'Owner', value: owner, inline: true },
++        { name: 'Action', value: a.action.recommendation.toUpperCase(), inline: true },
++      ],
++    }],
++  };
++}
++
++function routeFor(incident, notify) {
++  const team = incident.assessment?.ownership?.team;
++  const service = incident.assessment?.ownership?.service;
++  const route = (notify.routes ?? []).find(r =>
++    (r.team && r.team === team) || (r.service && r.service === service));
++  const target = route?.webhook ?? route?.slack ?? route?.discord;
++  if (target) return typeof target === 'string' ? { url: target } : target;
++  return notify.slack ?? notify.discord ?? null;
++}
++
++export function shouldNotify(incident, notify) {
++  const rec = incident.assessment?.action?.recommendation;
++  if (!['escalate', 'investigate'].includes(rec) && !(rec === 'observe' && notify.notifyObserved)) return false;
++  const now = Date.now();
++  const last = [...(incident.notifications ?? [])].at(-1);
++  if (last && now - Date.parse(last.at) < (notify.cooldownMs ?? 1800000)
++      && last.recommendation === rec) return false;
++  return true;
++}
++
++/**
++ * Sends a Slack/Discord webhook notification routed by owning team/service.
++ * Records the attempt on the incident; returns {sent, reason?}.
++ */
++export async function notifyIncident(incident, config, log) {
++  const notify = config.notify ?? {};
++  if (!shouldNotify(incident, notify)) return { sent: false, reason: 'suppressed' };
++  const target = routeFor(incident, notify);
++  if (!target?.url) return { sent: false, reason: 'no-webhook' };
++
++  const urgent = incident.assessment.action.needsHumanIntervention;
++  const payload = webhookType(target) === 'discord'
++    ? discordPayload(incident, config, urgent)
++    : slackPayload(incident, config, urgent);
++
++  const controller = new AbortController();
++  const timer = setTimeout(() => controller.abort(), notify.timeoutMs ?? 5000);
++  let ok = false, detail = '';
++  try {
++    const response = await fetch(target.url, {
++      method: 'POST',
++      headers: { 'Content-Type': 'application/json' },
++      body: JSON.stringify(payload),
++      signal: controller.signal,
++    });
++    ok = response.ok;
++    detail = `HTTP ${response.status}`;
++  } catch (error) {
++    detail = error.name === 'AbortError' ? 'timeout' : error.message;
++  } finally {
++    clearTimeout(timer);
++  }
++
++  incident.notifications.push({
++    at: new Date().toISOString(),
++    channel: webhookType(target),
++    team: incident.assessment?.ownership?.team ?? null,
++    recommendation: incident.assessment.action.recommendation,
++    ok, detail,
++  });
++  log?.(incident, 'notification', `${ok ? 'sent' : 'FAILED'} via ${webhookType(target)} (${detail})`);
++  return { sent: ok, reason: ok ? undefined : detail };
++}
+diff --git a/server/src/store.js b/server/src/store.js
+new file mode 100644
+index 0000000..3cec044
+--- /dev/null
++++ b/server/src/store.js
+@@ -0,0 +1,116 @@
++import { readFileSync, writeFileSync, renameSync, existsSync } from 'node:fs';
++import { randomUUID } from 'node:crypto';
++
++const SEVERITY_RANK = { critical: 4, high: 3, medium: 2, low: 1, unknown: 0 };
++
++/**
++ * In-memory incident store with optional JSON file persistence. Incidents are
++ * matched to incoming events by fingerprint; event IDs dedupe delivery retries.
++ */
++export class IncidentStore {
++  constructor({ storePath } = {}) {
++    this.storePath = storePath;
++    this.incidents = new Map();
++    this.eventIds = new Set();
++    this.byFingerprint = new Map();
++    this.persistTimer = undefined;
++    if (storePath && existsSync(storePath)) {
++      try {
++        const data = JSON.parse(readFileSync(storePath, 'utf8'));
++        for (const incident of data.incidents ?? []) this._index(incident);
++      } catch (error) {
++        console.error(`[overwatch] could not load store ${storePath}: ${error.message}`);
++      }
++    }
++  }
++
++  _index(incident) {
++    this.incidents.set(incident.id, incident);
++    for (const fp of incident.fingerprints) this.byFingerprint.set(fp, incident.id);
++    for (const event of incident.events) this.eventIds.add(event.id);
++  }
++
++  match(fingerprints) {
++    for (const fp of fingerprints) {
++      const id = this.byFingerprint.get(fp);
++      if (id) return this.incidents.get(id);
++    }
++    return undefined;
++  }
++
++  create(fields) {
++    const incident = {
++      id: `inc-${randomUUID().slice(0, 8)}`,
++      status: 'active',
++      createdAt: new Date().toISOString(),
++      timeline: [],
++      notifications: [],
++      manual: false,
++      ...fields,
++    };
++    this._index(incident);
++    this._dirty();
++    return incident;
++  }
++
++  /** Append events (deduped by id) and re-index any new fingerprints. */
++  merge(incident, events, fingerprints) {
++    let added = 0;
++    for (const event of events) {
++      if (this.eventIds.has(event.id)) continue;
++      this.eventIds.add(event.id);
++      incident.events.push(event);
++      added++;
++    }
++    for (const fp of fingerprints) {
++      if (!incident.fingerprints.includes(fp)) {
++        incident.fingerprints.push(fp);
++        this.byFingerprint.set(fp, incident.id);
++      }
++    }
++    incident.events.sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp));
++    incident.updatedAt = new Date().toISOString();
++    incident.lastSeen = incident.events.at(-1)?.timestamp ?? incident.lastSeen;
++    this._dirty();
++    return added;
++  }
++
++  log(incident, kind, detail) {
++    incident.timeline.push({ at: new Date().toISOString(), kind, detail });
++    if (incident.timeline.length > 500) incident.timeline.splice(0, incident.timeline.length - 500);
++    this._dirty();
++  }
++
++  list(status) {
++    const all = [...this.incidents.values()];
++    const filtered = status && status !== 'all' ? all.filter(i => i.status === status) : all;
++    return filtered.sort((a, b) =>
++      (SEVERITY_RANK[b.severity?.level] ?? 0) - (SEVERITY_RANK[a.severity?.level] ?? 0) ||
++      Date.parse(b.lastSeen) - Date.parse(a.lastSeen));
++  }
++
++  get(id) { return this.incidents.get(id); }
++
++  _dirty() {
++    if (!this.storePath || this.persistTimer) return;
++    this.persistTimer = setTimeout(() => {
++      this.persistTimer = undefined;
++      try {
++        const tmp = `${this.storePath}.tmp`;
++        writeFileSync(tmp, JSON.stringify({ incidents: [...this.incidents.values()] }));
++        renameSync(tmp, this.storePath);
++      } catch (error) {
++        console.error(`[overwatch] persist failed: ${error.message}`);
++      }
++    }, 250);
++  }
++
++  flush() {
++    if (this.persistTimer) { clearTimeout(this.persistTimer); this.persistTimer = undefined; }
++    if (this.storePath) {
++      const tmp = `${this.storePath}.tmp`;
++      writeFileSync(tmp, JSON.stringify({ incidents: [...this.incidents.values()] }));
++      renameSync(tmp, this.storePath);
++    }
++  }
++}
+diff --git a/server/test/server.test.js b/server/test/server.test.js
+new file mode 100644
+index 0000000..70ed13a
+--- /dev/null
++++ b/server/test/server.test.js
+@@ -0,0 +1,135 @@
++import { test, before, after } from 'node:test';
++import assert from 'node:assert/strict';
++import { createServer as httpServer } from 'node:http';
++import { createServer } from '../src/index.js';
++
++const T0 = Date.parse('2026-10-17T12:00:00.000Z');
++const ts = s => new Date(T0 + s * 1000).toISOString();
++let id = 0;
++const ev = (fp, s, o = {}) => ({
++  id: `e${++id}`, timestamp: ts(s), type: 'network_error', fingerprint: fp,
++  page: { url: 'https://shop.example.com/checkout' },
++  browser: o.browser ?? { name: 'Chrome', version: '141', os: 'macOS' },
++  error: { name: 'HTTPError', message: `HTTP ${o.status ?? 500}` },
++  request: { url: o.url ?? 'https://api.example.com/payments', method: 'POST', status: o.status ?? 500, transport: 'fetch' },
++});
++
++let server, store, base, webhook, webhookHits;
++
++before(async () => {
++  webhook = httpServer((req, res) => {
++    let body = '';
++    req.on('data', c => body += c);
++    req.on('end', () => { webhookHits.push(JSON.parse(body)); res.writeHead(200).end(); });
++  });
++  await new Promise(r => webhook.listen(0, '127.0.0.1', r));
++  webhookHits = [];
++  const webhookUrl = `http://127.0.0.1:${webhook.address().port}/hook`;
++
++  ({ server, store } = createServer({
++    publicUrl: 'http://overwatch.test',
++    triage: { serviceMap: [{ host: 'api.example.com', pathPrefix: '/payments', service: 'payments-api', team: 'payments' }], frontendOwner: { service: 'web-app', team: 'frontend' } },
++    notify: { slack: { url: webhookUrl }, routes: [{ team: 'payments', webhook: { url: webhookUrl, type: 'slack' } }], cooldownMs: 60_000, timeoutMs: 2000 },
++  }));
++  await new Promise(r => server.listen(0, '127.0.0.1', r));
++  base = `http://127.0.0.1:${server.address().port}`;
++});
++
++after(async () => {
++  server.close(); webhook.close(); store.flush?.();
++});
++
++const post = (path, body) => fetch(`${base}${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
++const get = path => fetch(`${base}${path}`).then(r => r.json());
++
++test('ingests an event envelope and creates an assessed incident', async () => {
++  const events = Array.from({ length: 24 }, (_, i) => ev('fp-pay', i < 6 ? i * 10 : 60 + i * 2));
++  const res = await post('/v1/events', { schemaVersion: 1, events });
++  assert.equal(res.status, 202);
++  const { incidents } = await res.json();
++  assert.equal(incidents.length, 1);
++
++  const { incident } = await get(`/api/incidents/${incidents[0]}`);
++  assert.equal(incident.status, 'active');
++  assert.equal(incident.severity.level, 'critical');
++  assert.equal(incident.assessment.ownership.service, 'payments-api');
++  assert.equal(incident.eventCount, 24);
++  assert.ok(incident.summary.includes('ESCALATE'));
++});
++
++test('sends a routed Slack notification for escalate/investigate incidents', async () => {
++  assert.ok(webhookHits.length >= 1, 'expected a webhook call');
++  const payload = webhookHits[0];
++  assert.ok(payload.text.includes('CRITICAL'));
++  assert.match(payload.blocks.at(-1).text.text, /overwatch\.test\/#incident-inc-/);
++});
++
++test('list endpoint filters by status', async () => {
++  const { incidents: active } = await get('/api/incidents?status=active');
++  assert.equal(active.length, 1);
++  const { incidents: resolved } = await get('/api/incidents?status=resolved');
++  assert.equal(resolved.length, 0);
++});
++
++test('acknowledge and resolve transitions appear in the timeline', async () => {
++  const { incidents } = await get('/api/incidents?status=active');
++  const id = incidents[0].id;
++
++  let res = await post(`/api/incidents/${id}/acknowledge`, { by: 'oncall-amy', note: 'looking' });
++  assert.equal(res.status, 200);
++  res = await post(`/api/incidents/${id}/acknowledge`, { by: 'x' });
++  assert.equal(res.status, 409);
++  res = await post(`/api/incidents/${id}/resolve`, { by: 'oncall-amy', note: 'rolled back deploy 4821' });
++  assert.equal(res.status, 200);
++
++  const { incident } = await get(`/api/incidents/${id}`);
++  assert.equal(incident.status, 'resolved');
++  assert.equal(incident.resolvedBy, 'oncall-amy');
++  assert.deepEqual(incident.timeline.map(t => t.kind).filter(k => ['acknowledged', 'resolved'].includes(k)), ['acknowledged', 'resolved']);
++});
++
++test('new matching events auto-reopen a resolved incident', async () => {
++  const { incidents } = await get('/api/incidents?status=resolved');
++  const id = incidents[0].id;
++  const res = await post('/v1/events', { schemaVersion: 1, events: [ev('fp-pay', 200)] });
++  assert.equal(res.status, 202);
++  const { incident } = await get(`/api/incidents/${id}`);
++  assert.equal(incident.status, 'active');
++  assert.ok(incident.timeline.some(t => t.kind === 'reopened'));
++});
++
++test('duplicate event IDs are deduped', async () => {
++  const before = store.match(['fp-pay']).events.length;
++  const e = ev('fp-pay', 210);
++  await post('/v1/events', { schemaVersion: 1, events: [e] });
++  await post('/v1/events', { schemaVersion: 1, events: [e] });
++  assert.equal(store.match(['fp-pay']).events.length, before + 1);
++});
++
++test('manual report creates an incident', async () => {
++  const res = await post('/api/reports', { title: 'Checkout button does nothing', description: 'Clicked pay 5 times, nothing happened', page: 'https://shop.example.com/checkout', reporter: 'sam', severity: 'high' });
++  assert.equal(res.status, 201);
++  const { incident } = await res.json();
++  assert.ok(incident.manual);
++  const { incident: full } = await get(`/api/incidents/${incident.id}`);
++  assert.equal(full.events[0].error.name, 'ManualReportCritical');
++  assert.equal(full.events[0].manual.reporter, 'sam');
++});
++
++test('manual report validates input', async () => {
++  const res = await post('/api/reports', { title: '', description: '' });
++  assert.equal(res.status, 400);
++});
++
++test('unknown incident and bad JSON are handled', async () => {
++  const res = await get('/api/incidents/inc-nope');
++  assert.equal(res.error, 'incident not found');
++  const bad = await fetch(`${base}/v1/events`, { method: 'POST', body: '{oops' });
++  assert.equal(bad.status, 400);
++});
++
++test('dashboard HTML is served at /', async () => {
++  const res = await fetch(`${base}/`);
++  assert.equal(res.status, 200);
++  assert.match(await res.text(), /Overwatch/);
++});
+diff --git a/triage/README.md b/triage/README.md
+index 7b64eb7..a6da414 100644
+--- a/triage/README.md
++++ b/triage/README.md
+@@ -94,7 +94,7 @@ unknown — the engine prefers admitting uncertainty over a fabricated answer.
+ ## Output shape
+ 
+ See `src/index.d.ts` for the full `IncidentAssessment` contract: title,
+-fingerprints, event window, the four assessments, `summary` (a one-paragraph
++fingerprints, member events, event window, the four assessments, `summary` (a one-paragraph
+ human-readable report) and a flat `evidence` list tagged by kind
+ (`correlation | severity | impact | ownership | action`).
+ 
+diff --git a/triage/src/index.d.ts b/triage/src/index.d.ts
+index 8ed4f32..a0a2c7a 100644
+--- a/triage/src/index.d.ts
++++ b/triage/src/index.d.ts
+@@ -62,6 +62,8 @@ export interface IncidentAssessment {
+   key: string;
+   fingerprints: string[];
+   eventCount: number;
++  /** The raw member events for this incident. */
++  events: TriageEvent[];
+   firstSeen: string;
+   lastSeen: string;
+   severity: SeverityAssessment;
+diff --git a/triage/src/index.js b/triage/src/index.js
+index 8902dae..a3b0fd3 100644
+--- a/triage/src/index.js
++++ b/triage/src/index.js
+@@ -47,6 +47,7 @@ export function triage(input, config = {}) {
+       key: incident.keys[0],
+       fingerprints: incident.fingerprints,
+       eventCount: incident.eventCount,
++      events: incident.events,
+       firstSeen: incident.firstSeen,
+       lastSeen: incident.lastSeen,
+       severity: { level: severity.level, score: severity.score, confidence: severity.confidence, trend: severity.trend, evidence: severity.evidence },
+-- 
+2.50.1 (Apple Git-155)
+
