@@ -1,4 +1,4 @@
-import { Link, useNavigate, useSearch } from '@tanstack/react-router'
+import { Link } from '@tanstack/react-router'
 import {
   Activity,
   BarChart3,
@@ -13,10 +13,8 @@ import {
   X,
 } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
-import { incidentCounts } from '#/lib/mock/incidents'
-import type { Range } from '#/lib/mock/overview'
+import { useLiveData } from '#/lib/live-data'
 import { Avatar } from '#/components/ui/Avatar'
-import { Select } from '#/components/ui/Select'
 
 function Wordmark() {
   return (
@@ -42,7 +40,8 @@ const NAV = [
 ]
 
 function NavItems({ collapsed, onNavigate }: { collapsed?: boolean; onNavigate?: () => void }) {
-  const active = incidentCounts().active
+  const { feed } = useLiveData()
+  const active = feed?.incidents.filter((incident) => incident.status !== 'resolved').length ?? 0
   return (
     <ul className="space-y-0.5">
       {NAV.map((item) => {
@@ -100,29 +99,6 @@ function SidebarFoot({ scenario, collapsed }: { scenario: string; collapsed?: bo
   )
 }
 
-function TimeRangeSelect() {
-  const navigate = useNavigate()
-  const search = useSearch({ strict: false }) as { range?: string }
-  const range = search.range ?? '24h'
-  return (
-    <Select
-      aria-label="Time range"
-      value={range}
-      onChange={(e) =>
-        navigate({
-          to: '.',
-          search: (prev: Record<string, unknown>) => ({ ...prev, range: e.target.value as Range }),
-        })
-      }
-      options={[
-        { value: '24h', label: 'Last 24 hours' },
-        { value: '7d', label: 'Last 7 days' },
-        { value: '30d', label: 'Last 30 days' },
-      ]}
-    />
-  )
-}
-
 function TopBar({ onMenu }: { onMenu: () => void }) {
   return (
     <header className="flex h-14 shrink-0 items-center gap-3 border-b border-line bg-surface px-4 lg:px-6">
@@ -138,13 +114,8 @@ function TopBar({ onMenu }: { onMenu: () => void }) {
         <Wordmark />
       </span>
       <div className="hidden items-center gap-2 md:flex">
-        <Select
-          aria-label="Environment"
-          defaultValue="production"
-          options={[{ value: 'production', label: 'Production' }]}
-        />
-        <span aria-hidden className="-ml-1.5 h-1.5 w-1.5 rounded-full bg-success" title="Healthy" />
-        <TimeRangeSelect />
+        <span className="rounded-control border border-line px-2.5 py-1.5 text-[12px] text-ink-2">Simulated environment</span>
+        <span className="text-[12px] text-ink-3">Live 3-minute window</span>
       </div>
       <div className="ml-auto flex items-center gap-1.5">
         <button
@@ -176,8 +147,10 @@ function TopBar({ onMenu }: { onMenu: () => void }) {
   )
 }
 
-export function AppShell({ scenario, children }: { scenario: string; children: ReactNode }) {
+export function AppShell({ children }: { children: ReactNode }) {
   const [sheetOpen, setSheetOpen] = useState(false)
+  const { feed } = useLiveData()
+  const scenario = feed?.snapshot?.scenario ?? 'loading'
 
   return (
     <div className="flex min-h-screen">

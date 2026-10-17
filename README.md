@@ -13,6 +13,13 @@ bun dev
 Runs on http://localhost:3000. The dashboard is at `/`; mock telemetry is
 served from `/api/telemetry`.
 
+The overview, incident list, and incident detail pages poll `/api/incidents`
+and display the server's current telemetry, detected incidents, and KEV
+decisions. The scenario selector calls `POST /api/telemetry`. This demo has no
+database: the server keeps its recent samples and incidents in memory, so a
+restart clears them. The dashboard shows when KEV is unconfigured or an
+evaluation fails rather than displaying a simulated decision.
+
 ## Stack
 
 TanStack Start (React + TypeScript), Tailwind CSS, Nitro server. Deploys

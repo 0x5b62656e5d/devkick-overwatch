@@ -2,10 +2,9 @@ import { HeadContent, Outlet, Scripts, createRootRoute } from '@tanstack/react-r
 
 import appCss from '../styles.css?url'
 import { AppShell } from '#/components/shell/AppShell'
-import { collectTelemetry } from '#/lib/telemetry'
+import { LiveDataProvider } from '#/lib/live-data'
 
 export const Route = createRootRoute({
-  loader: () => collectTelemetry().scenario,
   head: () => ({
     meta: [
       {
@@ -31,11 +30,12 @@ export const Route = createRootRoute({
 })
 
 function RootComponent() {
-  const scenario = Route.useLoaderData()
   return (
-    <AppShell scenario={scenario}>
-      <Outlet />
-    </AppShell>
+    <LiveDataProvider>
+      <AppShell>
+        <Outlet />
+      </AppShell>
+    </LiveDataProvider>
   )
 }
 

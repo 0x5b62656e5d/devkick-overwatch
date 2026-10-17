@@ -144,3 +144,8 @@ export function getMonitorStatus(): {
     pollIntervalMs: POLL_INTERVAL_MS,
   }
 }
+
+/** Recent samples behind the live dashboard charts. */
+export function getTelemetryHistory(): TelemetrySnapshot[] {
+  return [...history]
+}
