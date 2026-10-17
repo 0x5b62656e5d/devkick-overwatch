@@ -1,13 +1,13 @@
-import type { TelemetrySample } from './telemetry'
+import type { TelemetrySnapshot } from './telemetry'
 
 export interface IncidentCandidate {
   service: string
   signals: string[]
-  samples: TelemetrySample[]
+  snapshot: TelemetrySnapshot
 }
 
-// TODO: evaluate each telemetry batch and emit candidates when
+// TODO: evaluate each telemetry snapshot and emit candidates when
 // thresholds trip (outage, error-rate spike, latency spike, forum surge).
-export function detectIncidents(_samples: TelemetrySample[]): IncidentCandidate[] {
+export function detectIncidents(_snapshot: TelemetrySnapshot): IncidentCandidate[] {
   return []
 }
